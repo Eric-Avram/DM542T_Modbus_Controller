@@ -36,6 +36,28 @@ So far, none of these two methods seem good enough for the purpose of this proje
 The Atmega chip has 3 timers (T0, T1, T2); internally T0 is used for the integrated time function and I would like to keep the functionality for now, therefore only T1 and T2 are usable. 
 </details>
 
+<details open><summary>Connecting pins to timers</summary>
+
+**Sources**: 
+* [Secrets of Arduino PWM](https://docs.arduino.cc/tutorials/generic/secrets-of-arduino-pwm/)
+* [Controllerstech Tutorial on Arduino PWM](https://controllerstech.com/arduino-pwm-analogwrite-tutorial/)
+
+### Pinout
+|   Timer   |   Pins    |  Base Frequency   |   Dependencies          |   Prescaler Options   |
+|-----------|-----------|-------------------|-------------------      |-----------------------|
+|   Timer0  |   5 & 6   |  16MHz            |Arduino Time Functions   |          5            |                       
+|   Timer1  |   9 & 10  |  16MHz            |   None                  |          5            |
+|   Timer2  |   3 & 11  |  16MHz            |   None                  |          8            |
+
+<!-- ### Registers  -->
+
+
+### Formulas
+**Current Output Frequency** $$ f = \frac{f_{clk}}  {(2 * prescaler * top)} $$
+**TOP Value:** $$ Top = \frac{f_{clk}}{(2*prescaler*f)}$$
+
+</details>
+
 ### Troubleshooting
 **Details:** Here you can find all the relevant issues I came along while doing this project.  
 
