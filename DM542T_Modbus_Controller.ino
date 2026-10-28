@@ -1,16 +1,14 @@
 /****************************************************
  * Project Name: DM542T Modbus Controller
  * Author: 
- * Date: 27/10/2026
- * Description: 
- Uses
+ * Date: 28/10/2026
  ****************************************************/
 // Set verbosity level (0 = nothing, 1 = errors only, 2 = errors + warnings, 3 = full debug)
 #define VERBOSE_LEVEL 3
-#define PROJECT_NAME "Joint Controller"
+#define PROJECT_NAME "DM542T Controller"
 #define AUTHOR "ERIC ANDREI AVRAM"
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 1
+#define VERSION_MINOR 3
 #define VERSION_PATCH 0
 
 #define MbSerial Serial
@@ -19,112 +17,199 @@
 #pragma region Libraries 
    #include "Versioning.h"
    #include <ModbusSerial.h>
+   // #include <util/atomic.h>   // I think atomic blocks may be needed for setting frequency
 #pragma endregion
 
-#pragma region Constants
+#pragma region Pinout
    constexpr uint8_t PUL_PIN {9U};
    constexpr uint8_t DIR_PIN {8U};
-
-   const int addr_movement_done  = 0;
-   const int addr_movement_dir   = 1;
-   const int addr_move_infinite  = 2;
-
-   const int sanity_check   = 3;
-   const int addr_command_pulses = 4;
 #pragma endregion
 
-#pragma region Globals
-unsigned long previousMillis = 0;
-unsigned long interval = 100;
-constexpr uint8_t dutyCycle = 128;
-#pragma endregion
+// Namespace for storing modbus addresses
+namespace ADDR{
+   
+      //** Low -level control 
+   constexpr uint8_t _hreg_set_pwm_duty9  = 0x04;
+   constexpr uint8_t _hreg_set_pwm_duty10 = 0x05;
+   constexpr uint8_t _hreg_set_pwm_freq   = 0x06;
+
+   constexpr uint8_t _hreg_pwm_duty9   = 0x0A;  // R 
+   constexpr uint8_t _hreg_pwm_duty10  = 0x0B;  // R 
+   constexpr uint8_t _hreg_pwm_freq    = 0x0C;  // R feedback
+
+   constexpr uint8_t _coil_pwm_configured = 0x00;
+   constexpr uint8_t _coil_dir9           = 0x01;
+   constexpr uint8_t _coil_pwm_start9     = 0x02;
+   constexpr uint8_t _coil_dir10          = 0x03;
+   constexpr uint8_t _coil_pwm_start10    = 0x04;
+
+}
+
+namespace PWM {
+   constexpr uint16_t PWM_PRESCALERS[] = {1, 8, 64, 256, 1024};
+   enum PWM_MODE{
+      NORMAL,
+      PH_CORRECT,
+      CTC,
+      FAST_PWM,
+      FAST_PWM_PH_CORRECT
+   };
+   static PWM_MODE pwmMode    = PH_CORRECT;
+   static float    pwmFreq    = 0.0f;     
+   static uint16_t pwmTop     = 0;
+   static float    pwmDuty9   = 0.0f;
+   static float    pwmDuty10  = 0.0f;
+}
 
 
 #pragma region Objects & Handlers
    ModbusSerial mb (MbSerial, 1);
 #pragma endregion
 
-
 #pragma region Function Prototypes
+// float setPWMMode(PWM::PWM_MODE m);
+// float setPWMFrequency(float freq_hz);
+// void setPWMDuty(float duty, uint8_t pin = 0);
+void pwmOff(uint16_t PIN_NO = 0 );
+void pwmOn (uint16_t PIN_NO = 0);
 
 #pragma endregion
-bool debugger = false;
 
 void setup() {
    MbSerial.begin (Baudrate, MB_PARITY_EVEN); // prefer this line in accordance with the modbus standard.
-   while (! MbSerial){
-      LOG_PRINT(".");
-   }
-
+   while (! MbSerial);
    mb.config (Baudrate);
    
-   pinMode(PUL_PIN, OUTPUT);
    pinMode(DIR_PIN, OUTPUT);
+   pinMode(PUL_PIN, OUTPUT);
+
    delay(250);
+
    // registers hold a value of max 65535
-   // to write higher values, write the numbers in binary, then split them, in 2 16-bit registers. 
-   mb.addCoil(addr_movement_done, false);  // TRUE when movement reached position
-   mb.addCoil(addr_movement_dir, true);   // TRUE for right 
-   mb.addCoil(addr_move_infinite, false);  // TRUE to keep turning 
-   mb.addCoil(sanity_check, false);  // TRUE to keep turning 
-   
+   // to write higher values, split them, in 2 16-bit registers.
+   mb.setAdditionalServerData ("DM542T CONTROLLER"); //Report Server ID function (0x11) 
+
+   mb.addHreg(ADDR::_hreg_pwm_duty9,   (int)(PWM::pwmDuty9 * 100));
+   mb.addHreg(ADDR::_hreg_pwm_duty10,  (int)(PWM::pwmDuty10 * 100));
+
+   mb.addHreg(ADDR::_hreg_pwm_freq,    PWM::pwmFreq);
+   mb.addHreg(ADDR::_hreg_set_pwm_duty9,   (int)(PWM::pwmDuty9 * 100));
+   mb.addHreg(ADDR::_hreg_set_pwm_duty10,  (int)(PWM::pwmDuty10 * 100));
+   mb.addHreg(ADDR::_hreg_set_pwm_freq,    PWM::pwmFreq);
+
+   mb.addCoil(ADDR::_coil_dir9, false);
+   mb.addCoil(ADDR::_coil_pwm_start9,  false);
+   mb.addCoil(ADDR::_coil_dir10, false);
+   mb.addCoil(ADDR::_coil_pwm_start10, false);
+ 
+   TCCR1A = 0;            // Clean timer
+   TCCR1B = 0;
+   TCNT1  = 0;
+   // The timer is in ph correct mode, so the counter goes up then down
+   /* To calculate the output frequency, divide the clock hz by the prescaler to get the time it gets for one ramp:
+   f_clk (Clock) = 16MHz = 16 000 000Hz
+   prescaler = 1 (for now)
+   f (target) = 500 Hz
+   TOP = timer counts up to this value saved in ICR instead of 0 to 255, so:
+   f = f_clk / prescaler / top / 2 OR f = f_clk / (2 * prescaler * top)
+   500 Hz = 16 000 000 / (2 * 1 * top) => top = 16 000 000 / (2 * 500) = 16000
+   OCRA is the value to count up to, before the counter goes down, so for a 50% duty cycle, the OCRA is duty * TOP
+   */
+   ICR1  = 16000;           // TOP -> 40 kHz
+   OCR1A = 8000;           // 50% duty on D9 (OCR1 is duty*ICR1)
+   OCR1B = 100;           // 50% duty on D10
+
+   // Non-inverting output on both channels, WGM11 = 1 (mode 10, low bits)
+   TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
+
+   // WGM13 = 1 (mode 10, high bits), CS10 = 1 -> prescaler /1, timer starts
+   TCCR1B = _BV(WGM13) | _BV(CS10);
+ 
    LOG_PRINT("\n >>> Boot up completed. V.");
    LOG_PRINTLN(PROJECT_NAME);
    LOG_PRINTLN(PROJECT_VERSION);
    LOG_PRINTLN(AUTHOR);
 
    delay(1000);
+   update_params();  // update modbus data
 }
+
+#define pwmPin(condition, pin) (condition)? pwmOn(pin) : pwmOff(pin);
 
 void loop() {
    mb.task();
-   digitalWrite(DIR_PIN, mb.coil(addr_movement_dir));
+   digitalWrite(DIR_PIN, mb.coil(ADDR::_coil_dir9));
 
-   if (mb.coil(addr_move_infinite)){
-      pwm(PUL_PIN, 500, 0.50f);
-      // Test at whatever frequency this pulls out and 50% duty cycle. 
-      // analogWrite(PUL_PIN, 128);
-   }
-   else {
-      analogWrite(PUL_PIN, 0);
-   }
+   pwmPin(mb.coil(ADDR::_coil_pwm_start9), 9);
+   pwmPin(mb.coil(ADDR::_coil_pwm_start10), 10);
 
-   mb.setCoil(sanity_check, mb.coil(addr_move_infinite));
+   if (mb.Hreg(ADDR::_hreg_set_pwm_duty9) != mb.Hreg(ADDR::_hreg_pwm_duty9)){
+      setPWMDuty((mb.Hreg(ADDR::_hreg_set_pwm_duty9)/100.0f), 9);
+      update_params();
+   }
+   if (mb.Hreg(ADDR::_hreg_set_pwm_freq) != mb.Hreg(ADDR::_hreg_pwm_freq)){
+      setPWMFrequency(mb.Hreg(ADDR::_hreg_set_pwm_freq));
+      update_params();
+   }
 }
 
 
-unsigned long interval_ms = 0;
-unsigned long low_ms = 0;
 #pragma region Functions
-void pwm(const uint8_t &PIN_NO, uint16_t freq , float duty){
-   if (freq == 0 ) return;
-   if (duty <= 0.0f || duty > 1.0f) return;
 
-   // Store variables as static and recompute only when changed to avoid call stutter
-   static uint16_t lastFreq = 0;
-   static float lastDuty = 0.0f;
-   
-   if (freq != lastFreq){
-      lastFreq = freq;
-      interval_ms = 1000/freq;
-   }
-   
-   if (duty != lastDuty){
-      lastDuty = duty;
-      low_ms = (interval_ms * (1.0f-duty));
-   }
-
-   auto passed_ms = millis() - previousMillis;
-   // Low end pulse 
-   if (passed_ms >= low_ms){
-      digitalWrite(PIN_NO, HIGH);
-      // Reset condition
-      if (passed_ms >= interval_ms)
-         previousMillis = millis();
-   }
-   else {
-      digitalWrite(PIN_NO, LOW);
+void pwmOff(uint16_t PIN_NO ){
+   switch (PIN_NO) {
+      case 9:
+         TCCR1A &= ~(_BV(COM1A1));  // disconnect the pin from the Timer1 (restore normal operation)
+         PORTB &= ~(_BV(PB1));      // force pin to low
+         break;
+      case 10:
+         TCCR1A &= ~(_BV(COM1B1));
+         PORTB &= ~(_BV(PB2));
+         break;
+      default:                   // no pin specified, turn everything off
+         TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1));  // disconnect both pins from Timer1
+         PORTB &= ~(_BV(PB1) | _BV(PB2));         // force D9 and D10 LOW
    }
 }
-#pragma endregion
 
+void pwmOn(uint16_t PIN_NO ){
+      switch (PIN_NO) {
+      case 9:
+         TCCR1A |= (_BV(COM1A1));  // reconnect the pin from the Timer1 
+         break;
+      case 10:
+         TCCR1A |= (_BV(COM1B1));
+         break;
+      default:                                     // no pin specified, turn everything on
+         TCCR1A |= _BV(COM1A1) | _BV(COM1B1);     // reconnect both pins to Timer1
+   }
+}
+
+
+void update_params(){   // update modbus data
+   mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
+   mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
+   mb.setHreg(ADDR::_hreg_pwm_freq,    PWM::pwmFreq);
+}
+
+
+/* IN PROGRESS*/
+// Set frequency in Hz (shared by pins 9 and 10). Returns the actual frequency, or 0. 
+float setPWMFrequency(float freqHz) {
+   // TODO: Add constrain if defined upper/lower bounds?
+   if (freqHz <= 0.0f) return 0.0f;
+   return 1.0f;
+}
+
+// Duty 0.0 - 1.0 for pin 9, 10, or both (0). Only has an effect in the PWM modes. 
+void setPWMDuty(float duty, uint8_t pin) {
+  duty = constrain(duty, 0.0f, 1.0f);
+
+  if (pin == 0 || pin == 9)  PWM::pwmDuty9  = duty;
+  if (pin == 0 || pin == 10) PWM::pwmDuty10 = duty;
+
+   //TODO: Find a way to convert duty to OCR since OCR controls duty.
+}
+
+
+#pragma endregion
