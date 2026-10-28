@@ -7,6 +7,9 @@ Lately I've been having some extra time so I decided to go back to it, and reali
 
 I have some StepperOnline DM542T drivers laying around and some Arduino Nano clones, as well as an old RPI3B+, hence how I got to try to develop this controller. 
 
+## Documentation:
+* [Test Results & Dev docs](Tests & Results.md)
+
 ## Architecture
 *TBD*
 
