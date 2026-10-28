@@ -5,8 +5,8 @@
 ## 2. PWM Generation
 | Project Version 	| Frequency (Target) 	| Frequency (Result) 	| Pulse Duty (Target) 	| Pulse Duty (Result) 	| Overshoot % 	| Rise Time	| Evidence File|
 |-----------------	|--------------------	|--------------------	|---------------------	|---------------------	|-------------	|--------	|------------- |
-|       V0.1      	|      500Hz (default)  |        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results\V0.1-Default-analogWrite\evidence_00_V01.png)|
-|                 	|                    	|                    	|                     	|                     	|             	|        	|              |
+|V0.1-AnalogWrite()	|      500Hz (default)|        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results\evidence_00_V01.png)|
+|V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_001_v0.2](Test-Results\evidence_01_V02.png)|
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
@@ -14,6 +14,29 @@
 
 
 ## 3. Observations & Troubleshooting
+<details><summary>Testing: analogWrite() vs Bit-Banging</summary>
+Both methods would yield acceptable performance for simple PWM tasks (e.g. LED intensity control), and bit-banging seems to be a good alternative when you need to generate some PWM when no actual PWM pins are available. 
+
+### Bit-Banging
+Bit-banging is useful when there is the need of changing the frequency on the fly, like in this project. However, in the current very trivial implementation (ignoring shared static state of the function), this method has a few downsides:
+* The used millisecond resolution will not accurately give the correct result because integer resolution is used, and the highest possible frequency in this case is 1kHz:
+```C
+   if (freq != lastFreq){
+      lastFreq = freq;
+      interval_ms = 1000/freq;
+   }
+```
+* millis() slowly creates a drift because it throws away the overshoot
+
+### AnalogWrite()
+* The measured waveform is correct and within decent margins
+* Frequency cannot be changed since this method is linked to the timer directly. If frequency change is a requirement, it will be more precise to work with the timer directly. 
+
+So far, none of these two methods seem good enough for the purpose of this project, therefore I will continue to implement one the timers from the Atmega chip.
+The Atmega chip has 3 timers (T0, T1, T2); internally T0 is used for the integrated time function and I would like to keep the functionality for now, therefore only T1 and T2 are usable. 
+</details>
+
+### Troubleshooting
 **Details:** Here you can find all the relevant issues I came along while doing this project.  
 
 <details>

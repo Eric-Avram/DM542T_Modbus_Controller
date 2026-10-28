@@ -98,7 +98,7 @@ unsigned long low_ms = 0;
 #pragma region Functions
 void pwm(const uint8_t &PIN_NO, uint16_t freq , float duty){
    if (freq == 0 ) return;
-   if (duty < 0.0f || duty > 1.0f) return;
+   if (duty <= 0.0f || duty > 1.0f) return;
 
    // Store variables as static and recompute only when changed to avoid call stutter
    static uint16_t lastFreq = 0;
@@ -106,7 +106,7 @@ void pwm(const uint8_t &PIN_NO, uint16_t freq , float duty){
    
    if (freq != lastFreq){
       lastFreq = freq;
-      interval_ms = 1000UL/freq;
+      interval_ms = 1000/freq;
    }
    
    if (duty != lastDuty){
