@@ -1,7 +1,7 @@
 /****************************************************
- * Project Name: 
+ * Project Name: DM542T Modbus Controller
  * Author: 
- * Date: 2025-10-04
+ * Date: 27/10/2026
  * Description: 
  Uses
  ****************************************************/
@@ -28,13 +28,12 @@
    const int addr_movement_done  = 0;
    const int addr_movement_dir   = 1;
    const int addr_move_infinite  = 2;
-   // const int addr_command_home   = 3;
+
    const int sanity_check   = 3;
    const int addr_command_pulses = 4;
 #pragma endregion
 
 #pragma region Globals
-//  Add global variables here
 unsigned long previousMillis = 0;
 unsigned long interval = 100;
 constexpr uint8_t dutyCycle = 128;
@@ -52,15 +51,6 @@ constexpr uint8_t dutyCycle = 128;
 bool debugger = false;
 
 void setup() {
-   // #if VERBOSE_LEVEL > 0
-   //    Serial.begin(115200);
-   //    LOG_PRINT("Starting Serial Communication.");
-   //    while (!Serial) {
-   //       LOG_PRINT(".");
-   //       yield();
-   //    }
-   // #endif
-
    MbSerial.begin (Baudrate, MB_PARITY_EVEN); // prefer this line in accordance with the modbus standard.
    while (! MbSerial){
       LOG_PRINT(".");
@@ -89,23 +79,11 @@ void setup() {
 void loop() {
    mb.task();
    digitalWrite(DIR_PIN, mb.coil(addr_movement_dir));
-   // if (mb.coil(addr_move_infinite) && cycle.wake){
-   // if (cycle.switchMode()){
-   //    if (cycle.wake){
-   //       digitalWrite(PUL_PIN, HIGH);
-   //       mb.setCoil(addr_movement_done, true);
 
-   //    }
-   //    else {
-   //       digitalWrite(PUL_PIN, LOW);
-   //       mb.setCoil(addr_movement_done, false);
-   //    }
-   // }
-   // 1kHz = every 1 millisecond
    if (mb.coil(addr_move_infinite)){
-      // pwm(PUL_PIN, 1000);
+      pwm(PUL_PIN, 500, 0.50f);
       // Test at whatever frequency this pulls out and 50% duty cycle. 
-      analogWrite(PUL_PIN, 128);
+      // analogWrite(PUL_PIN, 128);
    }
    else {
       analogWrite(PUL_PIN, 0);
@@ -115,18 +93,38 @@ void loop() {
 }
 
 
+unsigned long interval_ms = 0;
+unsigned long low_ms = 0;
 #pragma region Functions
-void pwm(const uint8_t &PIN_NO, unsigned long interval){
-   unsigned long currentMillis = millis();
-   if (currentMillis - previousMillis >= interval){
-      // PIN_STATE = !PIN_STATE;
-      previousMillis = currentMillis;
-      digitalWrite(PIN_NO, HIGH);
-      debugger = true;
+void pwm(const uint8_t &PIN_NO, uint16_t freq , float duty){
+   if (freq == 0 ) return;
+   if (duty < 0.0f || duty > 1.0f) return;
+
+   // Store variables as static and recompute only when changed to avoid call stutter
+   static uint16_t lastFreq = 0;
+   static float lastDuty = 0.0f;
+   
+   if (freq != lastFreq){
+      lastFreq = freq;
+      interval_ms = 1000UL/freq;
+   }
+   
+   if (duty != lastDuty){
+      lastDuty = duty;
+      low_ms = (interval_ms * (1.0f-duty));
    }
 
-   // digitalWrite(PIN_NO, ((PIN_STATE)?HIGH:LOW));
-   Serial.write(debugger);
+   auto passed_ms = millis() - previousMillis;
+   // Low end pulse 
+   if (passed_ms >= low_ms){
+      digitalWrite(PIN_NO, HIGH);
+      // Reset condition
+      if (passed_ms >= interval_ms)
+         previousMillis = millis();
+   }
+   else {
+      digitalWrite(PIN_NO, LOW);
+   }
 }
 #pragma endregion
 
