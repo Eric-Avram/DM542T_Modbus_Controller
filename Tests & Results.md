@@ -6,8 +6,8 @@
 | Project Version 	| Frequency (Target) 	| Frequency (Result) 	| Pulse Duty (Target) 	| Pulse Duty (Result) 	| Overshoot % 	| Rise Time	| Evidence File|
 |-----------------	|--------------------	|--------------------	|---------------------	|---------------------	|-------------	|--------	|------------- |
 |V0.1-AnalogWrite()	|      500Hz (default)|        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results\evidence_00_V01.png)|
-|V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_001_v0.2](Test-Results\evidence_01_V02.png)|
-|                 	|                    	|                    	|                     	|                     	|             	|        	|              |
+|V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_01_v0.2](Test-Results\evidence_01_V02.png)|
+|V0.3-Timer1 PWM  	|      500Hz         	|       498.4        	|       50%           	|          50.0%      	|      14%    	|    64ns	|[evidence_02_V03](Test-Results\evidence_02_V03.png)|
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
@@ -35,6 +35,23 @@ Bit-banging is useful when there is the need of changing the frequency on the fl
 So far, none of these two methods seem good enough for the purpose of this project, therefore I will continue to implement one the timers from the Atmega chip.
 The Atmega chip has 3 timers (T0, T1, T2); internally T0 is used for the integrated time function and I would like to keep the functionality for now, therefore only T1 and T2 are usable. 
 </details>
+
+<details><summary>Comparison between the 3 tested methods</summary>
+
+The following values (and the ones found in the evidence folder) are the avg. values measured by the oscilloscope over a count of 1000 samples.
+
+| Function Used   	| Frequency Deviation	| Pulse Duty Deviation	| Overshoot % 	| Rise Time	|
+|-----------------	|--------------------	|--------------------	|-------------	|--------	|
+| analogWrite()   	|      11.4Hz        	|        0.2%        	|    13-14%   	|  244ns 	|
+| Bit-Banging     	|      13.75Hz       	|        3.4%        	|    13-14%   	| 25.575ns  |
+| Direct PWM      	|       1.6Hz        	|        0.0%        	|    13-14%   	|   64ns  	|
+
+For this application's use case, I will continue with Direct PWM method, since it shows the most accurate frequency control. Rise time and overshoot can be corrected by improving the hardware setup.
+
+After adding a 22Ohms resistor on the PWM output pin (PIN9) and powering the Arduino Nano via the VIN pin at 12V, the overshoot is lowered to a steady ~4-5% with a rise of ~12.5ns, which is well within my expectations.
+
+</details>
+
 
 <details open><summary>Connecting pins to timers</summary>
 

@@ -3,19 +3,10 @@
  * Author: 
  * Date: 28/10/2026
  ****************************************************/
-// Set verbosity level (0 = nothing, 1 = errors only, 2 = errors + warnings, 3 = full debug)
-#define VERBOSE_LEVEL 3
-#define PROJECT_NAME "DM542T Controller"
-#define AUTHOR "ERIC ANDREI AVRAM"
-#define VERSION_MAJOR 0
-#define VERSION_MINOR 3
-#define VERSION_PATCH 0
-
 #define MbSerial Serial
 #define Baudrate 115200
 
 #pragma region Libraries 
-   #include "Versioning.h"
    #include <ModbusSerial.h>
    // #include <util/atomic.h>   // I think atomic blocks may be needed for setting frequency
 #pragma endregion
@@ -125,11 +116,6 @@ void setup() {
    // WGM13 = 1 (mode 10, high bits), CS10 = 1 -> prescaler /1, timer starts
    TCCR1B = _BV(WGM13) | _BV(CS10);
  
-   LOG_PRINT("\n >>> Boot up completed. V.");
-   LOG_PRINTLN(PROJECT_NAME);
-   LOG_PRINTLN(PROJECT_VERSION);
-   LOG_PRINTLN(AUTHOR);
-
    delay(1000);
    update_params();  // update modbus data
 }
@@ -157,32 +143,38 @@ void loop() {
 #pragma region Functions
 
 void pwmOff(uint16_t PIN_NO ){
-   switch (PIN_NO) {
-      case 9:
-         TCCR1A &= ~(_BV(COM1A1));  // disconnect the pin from the Timer1 (restore normal operation)
-         PORTB &= ~(_BV(PB1));      // force pin to low
-         break;
-      case 10:
-         TCCR1A &= ~(_BV(COM1B1));
-         PORTB &= ~(_BV(PB2));
-         break;
-      default:                   // no pin specified, turn everything off
-         TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1));  // disconnect both pins from Timer1
-         PORTB &= ~(_BV(PB1) | _BV(PB2));         // force D9 and D10 LOW
-   }
+   (PIN_NO == 9)  ? (TCCR1A &= ~(_BV(COM1A1)), PORTB &= ~(_BV(PB1))) : 
+   (PIN_NO == 10) ? (TCCR1A &= ~(_BV(COM1B1)), PORTB &= ~(_BV(PB2))) : 
+   (TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1)), PORTB &= ~(_BV(PB1) | _BV(PB2)));
+   // switch (PIN_NO) {
+   //    case 9:
+   //       TCCR1A &= ~(_BV(COM1A1));  // disconnect the pin from the Timer1 (restore normal operation)
+   //       PORTB &= ~(_BV(PB1));      // force pin to low
+   //       break;
+   //    case 10:
+   //       TCCR1A &= ~(_BV(COM1B1));
+   //       PORTB &= ~(_BV(PB2));
+   //       break;
+   //    default:                   // no pin specified, turn everything off
+   //       TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1));  // disconnect both pins from Timer1
+   //       PORTB &= ~(_BV(PB1) | _BV(PB2));         // force D9 and D10 LOW
+   // }
 }
 
 void pwmOn(uint16_t PIN_NO ){
-      switch (PIN_NO) {
-      case 9:
-         TCCR1A |= (_BV(COM1A1));  // reconnect the pin from the Timer1 
-         break;
-      case 10:
-         TCCR1A |= (_BV(COM1B1));
-         break;
-      default:                                     // no pin specified, turn everything on
-         TCCR1A |= _BV(COM1A1) | _BV(COM1B1);     // reconnect both pins to Timer1
-   }
+   TCCR1A |= (PIN_NO == 9) ? (_BV(COM1A1)) : 
+   (PIN_NO == 10) ? (_BV(COM1B1)) : 
+   (_BV(COM1A1) | _BV(COM1B1));
+   //    switch (PIN_NO) {
+   //    case 9:
+   //       TCCR1A |= (_BV(COM1A1));  // reconnect the pin from the Timer1 
+   //       break;
+   //    case 10:
+   //       TCCR1A |= (_BV(COM1B1));
+   //       break;
+   //    default:                                     // no pin specified, turn everything on
+   //       TCCR1A |= _BV(COM1A1) | _BV(COM1B1);     // reconnect both pins to Timer1
+   // }
 }
 
 
