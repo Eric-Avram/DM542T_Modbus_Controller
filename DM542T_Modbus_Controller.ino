@@ -164,57 +164,49 @@ void loop() {
 
 
 #pragma region Functions
+// ================ Basic Control =====================
+uint8_t getControlWord(uint16_t PIN_NO){
+   const bool start_W0 = (PIN_NO == 0 || PIN_NO == 9);    
+   const bool start_W1 = (PIN_NO == 0 || PIN_NO == 10);  
+   // add more here
+   uint8_t control = 0;
+   if (!start_W0 && !start_W1) return 0;    // nothing to do
+   if (start_W0) control |= 0b01;   
+   if (start_W1) control |= 0b10; 
+   return control;
+}
 
-void pwmOff(uint16_t PIN_NO ){
-   const bool start_P0 = (PIN_NO == 0 || PIN_NO == 9);   // P0 or M0 will be motor/pwm 0, 1, etc..
-   const bool start_P1 = (PIN_NO == 0 || PIN_NO == 10);
-   if (!start_P0 && !start_P1) return;    // nothing to do
-   if (start_P0) PWM::pwmEnabled &= ~0b01;   
-   if (start_P1) PWM::pwmEnabled &= ~0b10; 
+void pwmOff(uint16_t PIN_NO ){   
+   PWM::pwmEnabled &= ~getControlWord(PIN_NO);
    updatePins();
-
-   // (PIN_NO == 9)  ? (TCCR1A &= ~(_BV(COM1A1)), PORTB &= ~(_BV(PB1))) : 
-   // (PIN_NO == 10) ? (TCCR1A &= ~(_BV(COM1B1)), PORTB &= ~(_BV(PB2))) : 
-   // (TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1)), PORTB &= ~(_BV(PB1) | _BV(PB2)));
-   // switch (PIN_NO) {
-   //    case 9:
-   //       TCCR1A &= ~(_BV(COM1A1));  // disconnect the pin from the Timer1 (restore normal operation)
-   //       PORTB &= ~(_BV(PB1));      // force pin to low
-   //       break;
-   //    case 10:
-   //       TCCR1A &= ~(_BV(COM1B1));
-   //       PORTB &= ~(_BV(PB2));
-   //       break;
-   //    default:                   // no pin specified, turn everything off
-   //       TCCR1A &= ~(_BV(COM1A1) | _BV(COM1B1));  // disconnect both pins from Timer1
-   //       PORTB &= ~(_BV(PB1) | _BV(PB2));         // force D9 and D10 LOW
-   // }
 }
 
 void pwmOn(uint16_t PIN_NO ){
-   // TODO: Wrapn the following operation in a function and return a single uint8_t with the status word
-   const bool start_P0 = (PIN_NO == 0 || PIN_NO == 9);   // P0 or M0 will be motor/pwm 0, 1, etc..
-   const bool start_P1 = (PIN_NO == 0 || PIN_NO == 10);
-   if (!start_P0 && !start_P1) return;    // nothing to do
-   if (start_P0) PWM::pwmEnabled |= 0b01;
-   if (start_P1) PWM::pwmEnabled |= 0b10; 
+   PWM::pwmEnabled |= getControlWord(PIN_NO);
    updatePins();
-
-   // TCCR1A |= (PIN_NO == 9) ? (_BV(COM1A1)) : 
-   // (PIN_NO == 10) ? (_BV(COM1B1)) : 
-   // (_BV(COM1A1) | _BV(COM1B1));
-   //    switch (PIN_NO) {
-   //    case 9:
-   //       TCCR1A |= (_BV(COM1A1));  // reconnect the pin from the Timer1 
-   //       break;
-   //    case 10:
-   //       TCCR1A |= (_BV(COM1B1));
-   //       break;
-   //    default:                                     // no pin specified, turn everything on
-   //       TCCR1A |= _BV(COM1A1) | _BV(COM1B1);     // reconnect both pins to Timer1
-   // }
 }
 
+static void updatePins() {
+  if (!(PWM::pwmEnabled & 1)) PORTB &= ~_BV(PB1);
+  if (!(PWM::pwmEnabled & 2)) PORTB &= ~_BV(PB2);
+
+  TCCR1A = (TCCR1A & 0x0F) | comBits();
+}
+
+static uint8_t comBits() {
+  const bool pwm = isPwmMode(PWM::pwmMode);
+  uint8_t com = 0;
+  if (PWM::pwmEnabled & 1) com |= pwm ? _BV(COM1A1) : _BV(COM1A0);
+  if (PWM::pwmEnabled & 2) com |= pwm ? _BV(COM1B1) : _BV(COM1B0);
+  return com;
+}
+
+static bool isPwmMode(PWM::PWM_MODE mode) {
+  return mode == PWM::PH_CORRECT || 
+         mode == PWM::FAST_PWM   || 
+         mode == PWM::FAST_PWM_PH_CORRECT;
+}
+// ================ /Basic Control/ =====================
 
 void update_params(){   // update modbus data
    mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
@@ -241,21 +233,5 @@ void setPWMDuty(float duty, uint8_t pin) {
    //TODO: Find a way to convert duty to OCR since OCR controls duty.
 }
 
-static void updatePins() {
-  TCCR1A = (TCCR1A & 0x0F) | comBits();
-  if (!(PWM::pwmEnabled & 1)) PORTB &= ~_BV(PB1);
-  if (!(PWM::pwmEnabled & 2)) PORTB &= ~_BV(PB2);
-}
 
-static uint8_t comBits() {
-  const bool pwm = isPwmMode(PWM::pwmMode);
-  uint8_t r = 0;
-  if (PWM::pwmEnabled & 1) r |= pwm ? _BV(COM1A1) : _BV(COM1A0);
-  if (PWM::pwmEnabled & 2) r |= pwm ? _BV(COM1B1) : _BV(COM1B0);
-  return r;
-}
-
-static bool isPwmMode(PWM::PWM_MODE m) {
-  return m == PWM::PH_CORRECT || m == PWM::FAST_PWM || m == PWM::FAST_PWM_PH_CORRECT;
-}
 #pragma endregion
