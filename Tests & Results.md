@@ -7,8 +7,8 @@
 |-----------------	|--------------------	|--------------------	|---------------------	|---------------------	|-------------	|--------	|------------- |
 |V0.1-AnalogWrite()	|      500Hz (default)|        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results\evidence_00_V01.png)|
 |V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_01_v0.2](Test-Results\evidence_01_V02.png)|
-|V0.3-Timer1 PWM  	|      500Hz         	|       498.4        	|       50%           	|          50.0%      	|      14%    	|    64ns	|[evidence_02_V03](Test-Results\evidence_02_V03.png)|
-|                 	|                    	|                    	|                     	|                     	|             	|        	|              |
+|V0.3-Timer1 PWM  	|      500Hz         	|       498.41       	|       50%           	|          50.0%      	|      14%    	|    64ns	|[evidence_02_V03](Test-Results\evidence_02_V03.png)|
+|v0.4-Timer1 PWM  	|      500Hz         	|        498.43      	|           50%       	|             50%     	|      5%     	|     96ns|[evidence_03_v04](Test-Results\evidence_03_V04.png)|
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 |                 	|                    	|                    	|                     	|                     	|             	|        	|              |
 
