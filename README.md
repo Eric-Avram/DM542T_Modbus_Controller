@@ -8,7 +8,7 @@ Lately I've been having some extra time so I decided to go back to it, and reali
 I have some StepperOnline DM542T drivers laying around and some Arduino Nano clones, as well as an old RPI3B+, hence how I got to try to develop this controller. 
 
 ## Documentation:
-* [Test Results & Dev docs](Tests & Results.md)
+* [Test Results & Dev docs](https://github.com/Eric-Avram/DM542T_Modbus_Controller/blob/2663727736d8d40bca5a35fcefe157f497c41f96/Tests%20%26%20Results.md)
 
 ## Architecture
 *TBD*

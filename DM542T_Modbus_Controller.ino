@@ -171,7 +171,7 @@ void pwmOff(uint16_t PIN_NO ){
    if (!start_P0 && !start_P1) return;    // nothing to do
    if (start_P0) PWM::pwmEnabled &= ~0b01;   
    if (start_P1) PWM::pwmEnabled &= ~0b10; 
-   // updatePins();
+   updatePins();
 
    // (PIN_NO == 9)  ? (TCCR1A &= ~(_BV(COM1A1)), PORTB &= ~(_BV(PB1))) : 
    // (PIN_NO == 10) ? (TCCR1A &= ~(_BV(COM1B1)), PORTB &= ~(_BV(PB2))) : 
@@ -198,7 +198,7 @@ void pwmOn(uint16_t PIN_NO ){
    if (!start_P0 && !start_P1) return;    // nothing to do
    if (start_P0) PWM::pwmEnabled |= 0b01;
    if (start_P1) PWM::pwmEnabled |= 0b10; 
-   // updatePins();
+   updatePins();
 
    // TCCR1A |= (PIN_NO == 9) ? (_BV(COM1A1)) : 
    // (PIN_NO == 10) ? (_BV(COM1B1)) : 
