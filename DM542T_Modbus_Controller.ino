@@ -164,7 +164,7 @@ void loop() {
 
 
 #pragma region Functions
-// ================ Basic Control =====================
+// ================ Basic Control ================
 uint8_t getControlWord(uint16_t PIN_NO){
    const bool start_W0 = (PIN_NO == 0 || PIN_NO == 9);    
    const bool start_W1 = (PIN_NO == 0 || PIN_NO == 10);  
@@ -206,15 +206,10 @@ static bool isPwmMode(PWM::PWM_MODE mode) {
          mode == PWM::FAST_PWM   || 
          mode == PWM::FAST_PWM_PH_CORRECT;
 }
-// ================ /Basic Control/ =====================
-
-void update_params(){   // update modbus data
-   mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
-   mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
-   // mb.setHreg(ADDR::_hreg_pwm_freq,    PWM::pwmFreq);
-}
+// ================ /Basic Control/ ================
 
 
+// ================  PWM Control  ================
 /* IN PROGRESS*/
 // Set frequency in Hz (shared by pins 9 and 10). Returns the actual frequency, or 0. 
 float setPWMFrequency(float freqHz) {
@@ -233,5 +228,125 @@ void setPWMDuty(float duty, uint8_t pin) {
    //TODO: Find a way to convert duty to OCR since OCR controls duty.
 }
 
+static float setTimer(PWM::PWM_MODE m, float freq) {
+   if (!(freq > 0.0f)) return 0.0f;
 
+   uint8_t idx = 0;
+   uint16_t top = 0;
+   float actual;
+
+   if (m == PWM::NORMAL) {
+      // Free-running 16-bit counter: only the prescaler sets the rate (overflow frequency).
+      float bestErr = 1e30f;              // get some really smol value
+      for (uint8_t i = 0; i < 5; i++) {   // find the prescaler with the best error margin 
+         float f = (float)F_CPU / (65536.0f * PWM::PWM_PRESCALERS[i]);
+         float err = fabsf(f - freq);
+         if (err < bestErr) {
+            bestErr = err;
+            idx = i;
+         }
+      }
+      actual = (float)F_CPU / (65536.0f * PWM::PWM_PRESCALERS[idx]);
+   } else {  
+      // f = F_CPU / (k * N * (TOP + off))
+      const float k      = (m == PWM::FAST_PWM) ? 1.0f : 2.0f;
+      const float offset = (m == PWM::PH_CORRECT || m == PWM::FAST_PWM_PH_CORRECT) ? 0.0f : 1.0f;
+      float t = 0.0f;
+      for (; idx < 5; idx++) {               // find the highest prescaler that yields a valid value
+         t = (float)F_CPU / (k * PWM::PWM_PRESCALERS[idx] * freq) - offset;
+         if (t <= 65535.0f) break;
+      }
+      if (idx == 5 || t < 2.0f) return 0.0f;  // too slow / too fast for this mode
+      top    = (uint16_t)lroundf(t);
+      actual = (float)F_CPU / (k * PWM::PWM_PRESCALERS[idx] * ((float)top + offset));
+   }
+   const uint8_t cs = idx + 1;
+
+   // Nothing changed -> don't restart the timer
+   if (PWM::pwmConfigured && m == PWM::pwmMode && top == PWM::pwmTop && cs == PWM::pwmCS)
+      return actual;
+
+   // Store the new data 
+   PWM::pwmMode         = m;
+   PWM::pwmTop          = top;
+   PWM::pwmCS           = cs;
+   PWM::pwmFreqReq      = freq;
+   PWM::pwmConfigured   = true;
+
+   pinMode(9, OUTPUT);
+   pinMode(10, OUTPUT);
+   
+   uint8_t wa, wb;
+   wgmBits(m, wa, wb);
+   const uint8_t com = comBits();
+   const uint16_t a = dutyToOCR(PWM::pwmDuty9, top, m);  // math outside the atomic block
+   const uint16_t b = dutyToOCR(PWM::pwmDuty10, top, m);
+
+   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+      TIMSK1 &= ~_BV(TOIE1);  
+      // pwmPendingTop = 0;   // cancel any pending on-the-fly change
+      TCCR1B = 0;  // stop the clock
+      TCCR1A = 0;  // Normal mode, pins disconnected: OCR1x written immediately
+      ICR1 = top;
+      OCR1A = a;
+      OCR1B = b;
+      TCNT1 = 0;
+      TCCR1A = wa | com;  // WGM low bits + output mode
+      TCCR1B = wb | cs;   // WGM high bits + start the clock
+   }
+   updatePins();
+
+   return actual;
+}
+
+// Select the correct Waveform Generation Mode bits based on the PWM Mode
+static void wgmBits(PWM::PWM_MODE m, uint8_t &a, uint8_t &b) {
+  switch (m) {
+    case PWM::FAST_PWM_PH_CORRECT:
+      a = 0;
+      b = _BV(WGM13);
+      break;  // mode 8
+    case PWM::PH_CORRECT:
+      a = _BV(WGM11);
+      b = _BV(WGM13);
+      break;  // mode 10
+    case PWM::CTC:
+      a = 0;
+      b = _BV(WGM13) | _BV(WGM12);
+      break;  // mode 12
+    case PWM::FAST_PWM:
+      a = _BV(WGM11);
+      b = _BV(WGM13) | _BV(WGM12);
+      break;  // mode 14
+    default:
+      a = 0;
+      b = 0;
+      break;  // mode 0
+  }
+}
+
+// Selects / calculcates the output compare registers values based on PWM mode.
+static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
+  switch (m) {
+    case PWM::PH_CORRECT:
+    case PWM::FAST_PWM_PH_CORRECT:
+      return (uint16_t)lroundf(duty * top);  // 0..TOP
+    case PWM::FAST_PWM:
+      {
+        uint32_t v = (uint32_t)lroundf(duty * ((float)top + 1.0f));  // period is TOP+1 clocks
+        return (v > top) ? top : (uint16_t)v;                        // OCR = TOP -> constant high
+      }
+    default:
+      return 0;  // duty not applicable
+  }
+}
+// ================ /PWM Control/ ================
+
+// ================ Modbus Communication ================
+void update_params(){   // update modbus data
+   mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
+   mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
+   // mb.setHreg(ADDR::_hreg_pwm_freq,    PWM::pwmFreq);
+}
+// ================ /Modbus Communication/ ================
 #pragma endregion
