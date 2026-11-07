@@ -70,8 +70,65 @@ After adding a 22Ohms resistor on the PWM output pin (PIN9) and powering the Ard
 
 
 ### Formulas
-**Current Output Frequency** $$ f = \frac{f_{clk}}  {(2 * prescaler * top)} $$
-**TOP Value:** $$ Top = \frac{f_{clk}}{(2*prescaler*f)}$$
+**Current Output Frequency** 
+$$ f = \frac{f_{clk}}  {(2 * prescaler * top)} $$
+**TOP Value:** 
+$$ Top = \frac{f_{clk}}{(2*prescaler*f)}$$
+
+The two formulas above are the mode 8 / mode 10 case. The full set used in the code ($f_{clk}$ = 16 MHz):
+
+**General output frequency** (`setTimer`)
+$$ f = \frac{f_{clk}}{k \cdot prescaler \cdot (TOP + offset)} $$
+
+| PWM_MODE | AVR mode | k | offset | Formula |
+|---|---|---|---|---|
+| `FAST_PWM_PH_CORRECT` & `PH_CORRECT`| 8 & 10 | 2 | 0 | $f = \frac{f_{clk}}{2 \cdot prescaler \cdot TOP}$ |
+| `CTC` | 12 | 2 | 1 | $f = \frac{f_{clk}}{2 \cdot prescaler \cdot (TOP + 1)}$ |
+| `FAST_PWM` | 14 | 1 | 1 | $f = \frac{f_{clk}}{prescaler \cdot (TOP + 1)}$ |
+
+**TOP value** (general form, rounded to an integer)
+$$ TOP = \operatorname{round}\left(\frac{f_{clk}}{k \cdot prescaler \cdot f} - offset\right) $$
+
+**Actual frequency** (recalculated from the rounded TOP, so it can differ slightly from the request)
+$$ f_{actual} = \frac{f_{clk}}{k \cdot prescaler \cdot (TOP + offset)} $$
+
+**Prescaler choice:** the smallest $prescaler \in \{1, 8, 64, 256, 1024\}$ for which $$ TOP \le 65535 $$
+Clock-select bits: $CS12{:}10 = index + 1$ (1 = /1, 2 = /8, 3 = /64, 4 = /256, 5 = /1024).
+
+**Valid TOP range**
+* `setTimer`: $2 \le TOP \le 65535$
+* `changePWMFrequency`: $40 \le TOP \le 65535$, current prescaler only
+
+**NORMAL mode** (TOP fixed at 0xFFFF, only the prescaler matters)
+$$ f = \frac{f_{clk}}{65536 \cdot prescaler} $$
+The code picks the prescaler with the smallest error $\lvert f_{prescaler} - f_{req} \rvert$. This is the overflow rate; the pin toggles once per overflow, so the signal on the pin is half this frequency.
+
+**Duty to compare value** (`dutyToOCR`, $D$ = 0.0 to 1.0)
+* Modes 8 and 10: $$ OCR = \operatorname{round}(D \cdot TOP) $$
+* Mode 14: $$ OCR = \min\left(\operatorname{round}(D \cdot (TOP + 1)),\ TOP\right) $$
+* NORMAL and CTC: $OCR = 0$ (duty not used)
+
+**Duty to/from Modbus register** (percent)
+$$ D = \frac{reg_{duty}}{100} \qquad reg_{duty} = D \cdot 100 $$
+
+**Frequency clamp** (`setPWMFrequency`)
+$$ f = \min\left(\max(f_{req},\ f_{lo}),\ f_{hi}\right) \qquad f_{lo} = 122\ \text{Hz},\ f_{hi} = 20000\ \text{Hz} $$
+
+**ISR condition for writing the new TOP** (`TIMER1_OVF_vect`)
+$$ TCNT1 + 10 < TOP_{new} $$
+
+#### Limits derived from the formulas (modes 8/10)
+
+**Frequency range for one prescaler**
+$$ \frac{f_{clk}}{2 \cdot prescaler \cdot 65535} \le f \le \frac{f_{clk}}{2 \cdot prescaler \cdot TOP_{min}} $$
+With $prescaler = 1$: about 122.07 Hz up to 200 kHz ($TOP_{min} = 40$). Just below 122.07 Hz, `setTimer` switches to prescaler 8.
+
+**Pulse width** (DM542T needs at least 2.5 µs high and low)
+$$ t_{high} = \frac{D}{f} \qquad t_{low} = \frac{1 - D}{f} $$
+
+**Frequency error from rounding TOP** (worst case, half a count)
+$$ \frac{\Delta f}{f} \le \frac{1}{2 \cdot TOP} $$
+For example: 0.03% at 5 kHz (TOP = 1600), 0.4% at 20 kHz (TOP = 400), up to 1.25% at 200 kHz (TOP = 40).
 
 </details>
 
