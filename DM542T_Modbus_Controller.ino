@@ -32,8 +32,9 @@ namespace ADDR {
    constexpr uint8_t _hreg_pwm_duty9 = 0x0E;   // R
    constexpr uint8_t _hreg_pwm_duty10 = 0x0F;  // R
    constexpr uint8_t _hreg_pwm_freq = 0x10;    // R
-   constexpr uint8_t _hreg_pwm_lo_limit = 0x11;
-   constexpr uint8_t _hreg_pwm_hi_limit = 0x12;
+   constexpr uint8_t _hreg_pwm_freq_actual = 0x11;
+   constexpr uint8_t _hreg_pwm_lo_limit = 0x12;
+   constexpr uint8_t _hreg_pwm_hi_limit = 0x13;
 
    constexpr uint8_t _coil_pwm_configured = 0x00;
    constexpr uint8_t _coil_dir9 = 0x01;
@@ -49,6 +50,8 @@ namespace ADDR {
 
 namespace PWM {
    constexpr uint16_t PWM_PRESCALERS[] = { 1, 8, 64, 256, 1024 }; // add up to 8 when implementing timer 2
+   constexpr uint16_t frq_default_lo_limit = 125;  // prescaler 1 gives ~122.07Hz, so choose a value above that to make sure default is valid.
+   constexpr uint16_t frq_default_hi_limit = 20000;
    enum PWM_MODE {
       NORMAL,
       PH_CORRECT,
@@ -56,8 +59,21 @@ namespace PWM {
       FAST_PWM,
       FAST_PWM_PH_CORRECT
    };
+   enum PWM_ERROR {
+      NONE = 0,
+      PWM_MODE_INCORRECT,
+      PWM_UNCONFIGURED,
+      FRQ_TOO_LOW,
+      PRESCALER_OUT_OF_BOUNDS,
+      FRQ_CONSTRAINTED_LO,
+      FRQ_CONSTRAINTED_HI,
+      FRQ_OUT_OF_BOUNDS,
+      FRQ_HI_LO_INVALID
+   };
+   static PWM_ERROR  pwmError = NONE;
    static PWM_MODE   pwmMode = PH_CORRECT;
    static float      pwmFreqReq = 0.0f;  // last successfully applied frequency request
+   static float      pwmFreqActual = 0.0f;
    static float      pwmDuty9 = 0.0f;
    static float      pwmDuty10 = 0.0f;
    static uint16_t   pwmTop = 0;
@@ -65,8 +81,7 @@ namespace PWM {
    static uint8_t    pwmEnabled = 0;  // bit0 = pin 9 connected, bit1 = pin 10 connected
    static bool       pwmConfigured = false;
 }
-float frq_lo_limit = 122;
-float frq_hi_limit = 20000;
+
 static volatile uint16_t pwmPendingTop = 0;      // 0 = no frequency change waiting
 
 #pragma region Objects & Handlers
@@ -79,8 +94,8 @@ void pwmOff(uint16_t PIN_NO = 0);
 
 static float setTimer   (PWM::PWM_MODE mode, float freq);
 float setPWMMode        (PWM::PWM_MODE m);
-float setPWMFrequency   (float freqHz);
-float changePWMFrequency(float freq_hz);
+float setPWMFrequency   (float freqHz,  float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
+float changePWMFrequency(float freq_hz, float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
 void  setPWMDuty        (float duty, uint8_t pin = 0);
 
 static uint16_t dutyToOCR     (float duty, uint16_t top, PWM::PWM_MODE m);
@@ -104,8 +119,7 @@ void setup() {
    delay(250);
 
    setPWMMode(PWM::FAST_PWM_PH_CORRECT);
-   setPWMFrequency(5000.0f);
-   
+   PWM::pwmFreqActual = setPWMFrequency(5000.0f);
    setPWMDuty(0.5f, 9);
    pwmOff();   // reset, clean state
 
@@ -121,45 +135,23 @@ void setup() {
    mb.addHreg(ADDR::_hreg_pwm_freq, PWM::pwmFreqReq);
    mb.addHreg(ADDR::_hreg_pwm_mode, PWM::pwmMode);
    mb.addHreg(ADDR::_hreg_pwm_top, PWM::pwmTop);
-   mb.addHreg(ADDR::_hreg_pwm_lo_limit, frq_lo_limit);
-   mb.addHreg(ADDR::_hreg_pwm_hi_limit, frq_hi_limit);
+   mb.addHreg(ADDR::_hreg_pwm_lo_limit, PWM::frq_default_lo_limit);
+   mb.addHreg(ADDR::_hreg_pwm_hi_limit, PWM::frq_default_hi_limit);
 
 
    mb.addHreg(ADDR::_hreg_set_pwm_duty9,  (int)(PWM::pwmDuty9 * 100));
    mb.addHreg(ADDR::_hreg_set_pwm_duty10, (int)(PWM::pwmDuty10 * 100));
    mb.addHreg(ADDR::_hreg_set_pwm_freq, PWM::pwmFreqReq);
+   mb.addHreg(ADDR::_hreg_pwm_freq_actual, PWM::pwmFreqActual);
 
    mb.addCoil(ADDR::_coil_pwm_configured, PWM::pwmConfigured);
    mb.addCoil(ADDR::_coil_dir9, false);
    mb.addCoil(ADDR::_coil_pwm_start9, false);
    mb.addCoil(ADDR::_coil_dir10, false);
    mb.addCoil(ADDR::_coil_pwm_start10, false);
- 
-   // TCCR1A = 0;            // Clean timer
-   // TCCR1B = 0;
-   // TCNT1  = 0;
-   // The timer is in ph correct mode, so the counter goes up then down
-   /* To calculate the output frequency, divide the clock hz by the prescaler to get the time it gets for one ramp:
-   f_clk (Clock) = 16MHz = 16 000 000Hz
-   prescaler = 1 (for now)
-   f (target) = 500 Hz
-   TOP = timer counts up to this value saved in ICR instead of 0 to 255, so:
-   f = f_clk / prescaler / top / 2 OR f = f_clk / (2 * prescaler * top)
-   500 Hz = 16 000 000 / (2 * 1 * top) => top = 16 000 000 / (2 * 500) = 16000
-   OCRA is the value to count up to, before the counter goes down, so for a 50% duty cycle, the OCRA is duty * TOP
-   */
-   // ICR1  = 16000;           // TOP -> 40 kHz
-   // OCR1A = 8000;           // 50% duty on D9 (OCR1 is duty*ICR1)
-   // OCR1B = 100;           // 50% duty on D10
 
-   // Non-inverting output on both channels, WGM11 = 1 (mode 10, low bits)
-   // TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
-
-   // WGM13 = 1 (mode 10, high bits), CS10 = 1 -> prescaler /1, timer starts
-   // TCCR1B = _BV(WGM13) | _BV(CS10);
    delay(250);
    update_params();  // update modbus data
-   
 }
 
 #define pwmPin(condition, pin) (condition)? pwmOn(pin) : pwmOff(pin);
@@ -176,7 +168,18 @@ void loop() {
       update_params();
    }
    if (mb.Hreg(ADDR::_hreg_set_pwm_freq) != mb.Hreg(ADDR::_hreg_pwm_freq)){
-      setPWMFrequency(mb.Hreg(ADDR::_hreg_set_pwm_freq));
+      // setPWMFrequency(mb.Hreg(ADDR::_hreg_set_pwm_freq));
+      const uint16_t freq_hz =  mb.Hreg(ADDR::_hreg_set_pwm_freq);
+      const uint16_t lo_limit = mb.hreg(ADDR::_hreg_pwm_lo_limit);   
+      const uint16_t hi_limit = mb.hreg(ADDR::_hreg_pwm_hi_limit);
+      if (isValidFrequencyRange(lo_limit, hi_limit)){
+         if (PWM::pwmError == PWM::FRQ_HI_LO_INVALID) PWM::pwmError = PWM::NONE; // reset error once the range reset
+         PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, lo_limit, hi_limit);
+      }
+      else {
+         PWM::pwmError = PWM::FRQ_HI_LO_INVALID;   
+         PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit);
+      }
       update_params();
    }
 }
@@ -213,8 +216,18 @@ static bool isPwmMode(PWM::PWM_MODE mode) {
 
 // Set frequency in Hz (shared by pins 9 and 10). Returns the actual frequency, or 0. 
 //TODO:: Add a way to also select which timer. (Maybe wrap this up in a lib, add pointers to OCRA/OCRB registers and use that)
-float setPWMFrequency(float freqHz) { 
-   return setTimer(PWM::pwmMode, constrain(freqHz, frq_lo_limit, frq_hi_limit));
+bool isValidFrequencyRange(const uint16_t &lo_limit, const uint16_t &hi_limit){
+   return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit);
+}
+
+float setPWMFrequency(float freqHz,float lo_limit, float hi_limit) { 
+   // Constraing the frequency to the set limit. If the modbus server limits are invalid, usen the default value
+   // More permissive than, changeFrequency() because it resets the timer
+   if (lo_limit < hi_limit){   // valid limit values, if not just default 
+      return setTimer(PWM::pwmMode, constrain(freqHz, (lo_limit >= 0) ? lo_limit : PWM::frq_default_lo_limit, 
+                                                      (hi_limit > 0) ? hi_limit : PWM::frq_default_hi_limit));
+   }
+   else return setTimer(PWM::pwmMode, constrain(freqHz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit));
 }
 
 float setPWMMode(PWM::PWM_MODE m) {
@@ -227,31 +240,32 @@ float setPWMMode(PWM::PWM_MODE m) {
 
 // Duty 0.0 - 1.0 for pin 9, 10, or both (0). Only has an effect in the PWM modes. 
 void setPWMDuty(float duty, uint8_t pin) {
-   if (!PWM::pwmConfigured || !isPwmMode(PWM::pwmMode)) return;
    if (!(pin == 9) && !(pin == 10) && !(pin == 0)) return;
 
-   const uint16_t OCR = dutyToOCR(constrain(duty, 0.0f, 1.0f), PWM::pwmTop, PWM::pwmMode);
+   duty = constrain(duty, 0.0f, 1.0f);
+   if (pin== 0 || pin == 9) PWM::pwmDuty9 = duty;
+   if (pin== 0 || pin == 10) PWM::pwmDuty10 = duty;
+   if (!PWM::pwmConfigured || !isPwmMode(PWM::pwmMode)) return;
+
+   const uint16_t OCR = dutyToOCR(duty, PWM::pwmTop, PWM::pwmMode);
 
    switch (pin){
       case 9:
-         PWM::pwmDuty9 = duty;
          ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             OCR1A = OCR;
          }
          break;
       case 10:
-         PWM::pwmDuty10 = duty;
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             OCR1B = OCR;
          }
          break;
       case 0:
-         PWM::pwmDuty10 = duty;
-         PWM::pwmDuty9  = duty;
             ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             OCR1A = OCR;
             OCR1B = OCR;
          }
+         break;
       default:
          return;
    }
@@ -259,9 +273,11 @@ void setPWMDuty(float duty, uint8_t pin) {
 }
 
 // Change PWM frq of an already running timer
-float changePWMFrequency(float freq_hz){
+float changePWMFrequency(float freq_hz, float lo_limit, float hi_limit){
    if (freq_hz <= 0.0f) return 0.0f;
    if ((!PWM::pwmConfigured) || (PWM::pwmMode != PWM::FAST_PWM_PH_CORRECT)) return 0.0f;
+   if (lo_limit > hi_limit) return 0.0f;
+   freq_hz = constrain(freq_hz, lo_limit, hi_limit);
 
    const uint16_t _prescaler = PWM::PWM_PRESCALERS[PWM::pwmCS-1]; // select current prescaler
    const float t = (float)F_CPU / (2.0f * _prescaler * freq_hz);
@@ -270,20 +286,37 @@ float changePWMFrequency(float freq_hz){
    const uint16_t top    = (uint16_t)lroundf(t);
    const float    actual = (float)F_CPU / (2.0f * _prescaler * (float)top);
 
-   if (top == PWM::pwmTop) return actual;
+   if (top == PWM::pwmTop){
+      PWM::pwmFreqReq = freq_hz;
+      return actual;  
+   }
    // Need to calculate twice because the timer would cahnge the frequency for both pins
    const uint16_t a = dutyToOCR(PWM::pwmDuty9,  top, PWM::pwmMode);   
    const uint16_t b = dutyToOCR(PWM::pwmDuty10, top, PWM::pwmMode);
 
-   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {                  
-      do {                                               
-         TIFR1 = _BV(TOV1);
+   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {        
+      if (top > PWM::pwmTop){            
+         // If the new top is higher, new value can be written directly, because the current one will still generate a pulse
+         // The new value for the OCR will just be saved in the buffer until the next bottom, when it updates
+         // Downside is that this method delays the changes by 1 period from the command, but keeps accurate steps 
+         // this helps to avoid any step skips when the new top is < than the old top. 
+         TIMSK1 &= ~_BV(TOIE1);          // cancel any pending "frequency up" change
+         pwmPendingTop = 0;
+         ICR1  = top;
          OCR1A = a;
          OCR1B = b;
-      } while (TIFR1 & _BV(TOV1));
+      }
+      else{
+         // Same as before, write the new value after bottom so it loads in the next period
+         do {                                               
+            TIFR1 = _BV(TOV1);
+            OCR1A = a;
+            OCR1B = b;
+         } while (TIFR1 & _BV(TOV1));
 
-      pwmPendingTop = top;                               // the ISR applies it at the next BOTTOM
-      TIMSK1 |= _BV(TOIE1);
+         pwmPendingTop = top;                               // the ISR applies it at the next BOTTOM
+         TIMSK1 |= _BV(TOIE1);
+      }          
    }
 
    PWM::pwmTop     = top;
@@ -292,8 +325,7 @@ float changePWMFrequency(float freq_hz){
 }
 
 static float setTimer(PWM::PWM_MODE mode, float freq) {
-   if (freq <= 0.0f) return 0.0f;
-
+   if (freq <= 0.0f)  return 0.0f;
    uint8_t idx  = 0;
    uint16_t top = 0;
    float actual;
@@ -326,8 +358,10 @@ static float setTimer(PWM::PWM_MODE mode, float freq) {
    const uint8_t cs = idx + 1;
 
    // Nothing changed -> don't restart the timer
-   if (PWM::pwmConfigured && mode == PWM::pwmMode && top == PWM::pwmTop && cs == PWM::pwmCS)
+   if (PWM::pwmConfigured && mode == PWM::pwmMode && top == PWM::pwmTop && cs == PWM::pwmCS){
+      PWM::pwmFreqReq = freq;
       return actual;
+   }
 
    // Store the new data 
    PWM::pwmMode         = mode;
@@ -371,14 +405,10 @@ ISR(TIMER1_OVF_vect) {
   }
   // otherwise: try again at the next BOTTOM (the interrupt stays enabled)
 }
-
-// Select the correct Waveform Generation Mode bits based on the PWM Mode
-
-
-// Selects / calculcates the output compare registers values based on PWM mode.
 // ================ /PWM Control/ ================
 
 // ================ Helper Functions ================
+// Selects / calculcates the output compare registers values based on PWM mode.
 static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
   switch (m) {
     case PWM::PH_CORRECT:
@@ -394,6 +424,7 @@ static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
   }
 }
 
+// Select the correct Waveform Generation Mode bits based on the PWM Mode
 static void wgmBits(PWM::PWM_MODE m, uint8_t &a, uint8_t &b) {
   switch (m) {
     case PWM::FAST_PWM_PH_CORRECT:
@@ -427,6 +458,7 @@ static uint8_t comBits() {
   return com;
 }
 
+// Returns the PWMEnabled status cotrol word (will add more with TMR2)
 uint8_t getControlWord(uint16_t PIN_NO){
    const bool start_W0 = (PIN_NO == 0 || PIN_NO == 9);    
    const bool start_W1 = (PIN_NO == 0 || PIN_NO == 10);  
@@ -445,6 +477,7 @@ void update_params(){   // update modbus data
    mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
    mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
    mb.setHreg(ADDR::_hreg_pwm_freq,     PWM::pwmFreqReq);
+   mb.setHreg(ADDR::_hreg_pwm_freq_actual, PWM::pwmFreqActual);
 }
 // ================ /Modbus Communication/ ================
 #pragma endregion
