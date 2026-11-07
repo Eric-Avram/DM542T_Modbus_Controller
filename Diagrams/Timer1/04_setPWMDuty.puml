@@ -1,0 +1,60 @@
+@startuml 04_setPWMDuty
+!include _style.iuml
+title setPWMDuty(duty, pin): change the duty cycle of pin 9, 10 or both (0)
+
+start
+:setPWMDuty(duty, pin);
+if (timer not configured\nOR mode is not a PWM mode?) then (yes)
+  :return
+  (duty is NOT stored);
+  note right: PWM modes = PH_CORRECT, FAST_PWM, FAST_PWM_PH_CORRECT
+  stop
+endif
+if (pin is not 0, 9 or 10?) then (yes)
+  :return;
+  stop
+endif
+
+:OCR = dutyToOCR(constrain(duty, 0..1), pwmTop, pwmMode);
+note right
+  dutyToOCR:
+  |= mode |= OCR value |
+  | PH_CORRECT, FAST_PWM_PH_CORRECT | round(duty * TOP) |
+  | FAST_PWM | round(duty * (TOP+1)), max TOP |
+  | NORMAL, CTC | 0 (duty not used) |
+end note
+
+switch (pin?)
+case (9)
+  :pwmDuty9 = duty;
+  #FBE3E3:ATOMIC_BLOCK { OCR1A = OCR };
+case (10)
+  :pwmDuty10 = duty;
+  #FBE3E3:ATOMIC_BLOCK { OCR1B = OCR };
+case (0 = both)
+  :pwmDuty9 = duty
+  pwmDuty10 = duty;
+  #FBE3E3:ATOMIC_BLOCK { OCR1A = OCR; OCR1B = OCR };
+  note right
+    No "break" in the code: this case falls
+    through to "default: return". No effect today,
+    because the function ends there anyway.
+  end note
+endswitch
+
+note right
+  The stored pwmDutyX is the raw, unclamped value;
+  only the OCR value is clamped.
+end note
+
+:new OCR1x waits in the buffer register;
+note right
+  OCR1x is double-buffered in PWM modes:
+  |= mode |= buffer -> active at |
+  | FAST_PWM_PH_CORRECT (8) | BOTTOM |
+  | PH_CORRECT (10) | TOP |
+  | FAST_PWM (14) | BOTTOM |
+  So the current period finishes cleanly (no glitch).
+end note
+stop
+@enduml

@@ -1,0 +1,79 @@
+@startuml 05_pwmOn_pwmOff_updatePins
+!include _style.iuml
+title pwmOn(pin) / pwmOff(pin): connect or disconnect pins 9/10 from Timer1
+
+start
+:pwmOn(pin)  or  pwmOff(pin);
+
+partition "getControlWord(pin): pin number -> bit mask" {
+  :mask = 0;
+  if (pin == 0 or 9?) then (yes)
+    :mask |= 0b01  (pin 9);
+  endif
+  if (pin == 0 or 10?) then (yes)
+    :mask |= 0b10  (pin 10);
+  endif
+  note right: any other pin -> mask 0 (nothing changes)
+}
+
+if (pwmOn?) then (yes)
+  :pwmEnabled |= mask;
+else (pwmOff)
+  :pwmEnabled &= ~mask;
+endif
+note right
+  pwmEnabled: bit0 = pin 9, bit1 = pin 10
+  (software state; the hardware follows in updatePins)
+end note
+
+partition "updatePins()" {
+  if (pin 9 disabled (bit0 = 0)?) then (yes)
+    #E3F2E1:PORTB &= ~PB1
+    (pin 9 output latch LOW);
+  endif
+  if (pin 10 disabled (bit1 = 0)?) then (yes)
+    #E3F2E1:PORTB &= ~PB2
+    (pin 10 output latch LOW);
+  endif
+  note right
+    The PORTB level only matters while the pin is
+    disconnected from the timer. Setting it LOW first
+    means the pin goes LOW the moment it is released.
+  end note
+
+  partition "comBits(): COM bits for the enabled pins" {
+    :com = 0;
+    if (pin 9 enabled?) then (yes)
+      if (PWM mode?) then (yes)
+        :com |= COM1A1
+        (non-inverting PWM);
+      else (NORMAL / CTC)
+        :com |= COM1A0
+        (toggle on compare match);
+      endif
+    endif
+    if (pin 10 enabled?) then (yes)
+      if (PWM mode?) then (yes)
+        :com |= COM1B1;
+      else (NORMAL / CTC)
+        :com |= COM1B0;
+      endif
+    endif
+  }
+
+  #E3F2E1:TCCR1A = (TCCR1A & 0x0F) | com;
+  note right
+    0x0F keeps the low nibble (WGM11:10),
+    the high nibble (COM1A1:0, COM1B1:0) is replaced.
+    COM = 00 -> pin is a normal I/O pin (driven by PORTB)
+    COM != 00 -> pin is driven by the timer
+  end note
+}
+stop
+
+note
+  loop() calls pwmOn/pwmOff for pins 9 and 10 on **every pass**,
+  so updatePins() rewrites TCCR1A and PORTB each time
+  (same values when nothing changed).
+end note
+@enduml

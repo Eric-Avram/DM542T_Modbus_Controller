@@ -1,0 +1,110 @@
+@startuml 02_setTimer
+!include _style.iuml
+title setTimer(mode, freq): full Timer1 (re)configuration
+
+start
+:setTimer(mode, freq);
+if (freq <= 0?) then (yes)
+  :return 0;
+  stop
+endif
+
+partition "1. Pick prescaler N and TOP" {
+  if (mode == NORMAL?) then (yes)
+    :TOP is fixed at 0xFFFF (free-running);
+    :for each N in {1, 8, 64, 256, 1024}:
+      f = F_CPU / (65536 * N)
+    keep the N with the smallest |f - freq|;
+    :actual = F_CPU / (65536 * N);
+    note right
+      TOP stays 0 in the state variable;
+      ICR1 is not used in mode 0.
+    end note
+  else (no)
+    :choose k and offset for the mode;
+    note right
+      f = F_CPU / (k * N * (TOP + offset))
+      |= mode |= k |= offset |
+      | PH_CORRECT (10) | 2 | 0 |
+      | FAST_PWM_PH_CORRECT (8) | 2 | 0 |
+      | CTC (12) | 2 | 1 |
+      | FAST_PWM (14) | 1 | 1 |
+    end note
+    :idx = 0;
+    repeat
+      :t = F_CPU / (k * N[idx] * freq) - offset;
+      if (t <= 65535?) then (yes, fits 16 bit)
+        break
+      endif
+      :idx++  (next, bigger prescaler);
+    repeat while (idx < 5?) is (yes)
+    note right
+      Smallest prescaler that fits gives the
+      largest TOP, i.e. the finest duty resolution.
+    end note
+    if (idx == 5 (too slow)\nor t < 2 (too fast)?) then (yes)
+      :return 0
+      (timer untouched);
+      stop
+    endif
+    :TOP = round(t)
+    actual = F_CPU / (k * N * (TOP + offset));
+  endif
+  :cs = idx + 1
+  (CS12:10 bit value: 1=/1, 2=/8, 3=/64, 4=/256, 5=/1024);
+}
+
+if (already configured AND\nsame mode, TOP and cs?) then (yes)
+  :return actual
+  (do not restart the timer);
+  stop
+endif
+
+partition "2. Store the new state" {
+  :pwmMode = mode
+  pwmTop = TOP
+  pwmCS = cs
+  pwmFreqReq = freq
+  pwmConfigured = true;
+  :pinMode(9, OUTPUT)
+  pinMode(10, OUTPUT);
+}
+
+partition "3. Compute register values (interrupts still on)" {
+  :wgmBits(mode) -> wa (TCCR1A part), wb (TCCR1B part);
+  :comBits() -> com (COM bits of the enabled pins);
+  :a = dutyToOCR(pwmDuty9, TOP, mode)
+  b = dutyToOCR(pwmDuty10, TOP, mode);
+  note right
+    Float math (lroundf) is slow on AVR,
+    so it is done BEFORE the atomic block.
+  end note
+}
+
+partition "4. ATOMIC_BLOCK: write the hardware (interrupts off, a few us)" $ATOMIC {
+  :TIMSK1 &= ~TOIE1
+  pwmPendingTop = 0;
+  note right: cancel a pending changePWMFrequency()
+  :TCCR1B = 0;
+  note right: clock stopped, counter frozen
+  :TCCR1A = 0;
+  note right
+    Mode 0, pins disconnected from the timer.
+    In mode 0 OCR1x is NOT buffered,
+    so the next writes take effect at once.
+  end note
+  :ICR1 = TOP
+  OCR1A = a
+  OCR1B = b
+  TCNT1 = 0;
+  :TCCR1A = wa | com;
+  note right: WGM11:10 + output mode for pins 9/10
+  :TCCR1B = wb | cs;
+  note right: WGM13:12 + prescaler -> **clock starts here**
+}
+
+:updatePins();
+note right: see 05_pwmOn_pwmOff_updatePins
+:return actual;
+stop
+@enduml

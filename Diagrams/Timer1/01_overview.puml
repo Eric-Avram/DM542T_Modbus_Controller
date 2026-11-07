@@ -1,0 +1,67 @@
+@startuml 01_overview
+!include _style.iuml
+title Timer1 functions: call graph and register access
+
+package "Callers" {
+  [setup()] as SETUP
+  [loop()] as LOOP
+}
+
+package "Public API" {
+  [setPWMMode(m)] as MODE
+  [setPWMFrequency(f)] as FREQ
+  [setPWMDuty(duty, pin)] as DUTY
+  [pwmOn(pin) / pwmOff(pin)] as ONOFF
+  [changePWMFrequency(f)] as CHG
+}
+
+package "Internal" {
+  [setTimer(mode, f)] as SET
+  [updatePins()] as UPD
+  [ISR(TIMER1_OVF_vect)] as ISR
+}
+
+package "Helpers (only compute values)" {
+  [wgmBits()] as WGM
+  [dutyToOCR()] as D2O
+  [comBits()] as COM
+  [getControlWord()] as GCW
+}
+
+SETUP --> MODE
+SETUP --> FREQ
+SETUP --> DUTY
+SETUP --> ONOFF
+LOOP --> FREQ : set_pwm_freq changed
+LOOP --> DUTY : set_pwm_duty9 changed
+LOOP --> ONOFF : every pass
+
+MODE --> SET : only if a frequency\nis already set
+FREQ --> SET : f clamped to\n[lo, hi] limit
+SET --> WGM
+SET --> D2O
+SET --> UPD
+DUTY --> D2O
+CHG --> D2O
+ONOFF --> GCW
+ONOFF --> UPD
+UPD --> COM
+CHG ..> ISR : arms (TOIE1)
+
+note right of CHG
+  Not called anywhere yet.
+  For the ramp; needs
+  FAST_PWM_PH_CORRECT (mode 8).
+end note
+
+legend bottom
+  **Who writes which Timer1 register** (W = write, - = untouched)
+  |= Function |= TCCR1A |= TCCR1B |= ICR1 |= OCR1A/B |= TCNT1 |= TIMSK1 |= TIFR1 |= PORTB |
+  | setTimer | W (all) | W | W | W | W (=0) | W (TOIE1 off) | - | - |
+  | updatePins | W (COM bits) | - | - | - | - | - | - | W (PB1/PB2 LOW) |
+  | setPWMDuty | - | - | - | W | - | - | - | - |
+  | changePWMFrequency | - | - | - | W | - | W (TOIE1 on) | W (clear TOV1) | - |
+  | ISR(TIMER1_OVF) | - | - | W | - | - | W (TOIE1 off) | - | - |
+  Helpers (wgmBits, comBits, dutyToOCR, getControlWord, isPwmMode) only compute values.
+endlegend
+@enduml

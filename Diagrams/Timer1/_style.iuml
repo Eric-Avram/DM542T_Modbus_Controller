@@ -1,0 +1,19 @@
+' Shared look for the Timer1 diagrams. Included by every .puml in this folder.
+!pragma layout smetana
+skinparam shadowing false
+skinparam defaultFontName Segoe UI
+skinparam defaultFontSize 12
+skinparam ActivityBackgroundColor #F7F9FC
+skinparam ActivityBorderColor #4A6FA5
+skinparam ActivityDiamondBackgroundColor #FFF6E0
+skinparam ActivityDiamondBorderColor #C9922E
+skinparam PartitionBorderColor #8899AA
+skinparam NoteBackgroundColor #FFFDE7
+skinparam NoteBorderColor #B8A040
+skinparam SequenceGroupBorderColor #4A6FA5
+skinparam ArrowColor #44546A
+
+' Colour used for anything that touches a hardware register
+!$REG = "#E3F2E1"
+' Colour used for interrupt-off (ATOMIC_BLOCK) sections
+!$ATOMIC = "#FBE3E3"

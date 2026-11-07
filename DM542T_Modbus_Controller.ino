@@ -19,32 +19,32 @@
 // Namespace for storing modbus addresses
 namespace ADDR {
 
-//** Low -level control 0x00 - 0x09
-constexpr uint8_t _hreg_set_pwm_duty9 = 0x04;
-constexpr uint8_t _hreg_set_pwm_duty10 = 0x05;
-constexpr uint8_t _hreg_set_pwm_freq = 0x06;
+   //** Low -level control 0x00 - 0x09
+   constexpr uint8_t _hreg_set_pwm_duty9 = 0x04;
+   constexpr uint8_t _hreg_set_pwm_duty10 = 0x05;
+   constexpr uint8_t _hreg_set_pwm_freq = 0x06;
 
-//** PWM Settings 0x0A - 0x14 (10-20)
-constexpr uint8_t _hreg_pwm_enabled = 0x0A;
-constexpr uint8_t _hreg_pwm_mode = 0x0B;
-constexpr uint8_t _hreg_pwm_top = 0x0C;
-constexpr uint8_t _hreg_pwm_cs = 0x0D;
-constexpr uint8_t _hreg_pwm_duty9 = 0x0E;   // R
-constexpr uint8_t _hreg_pwm_duty10 = 0x0F;  // R
-constexpr uint8_t _hreg_pwm_freq = 0x10;    // R
-constexpr uint8_t _hreg_pwm_lo_limit = 0x11;
-constexpr uint8_t _hreg_pwm_hi_limit = 0x12;
+   //** PWM Settings 0x0A - 0x14 (10-20)
+   constexpr uint8_t _hreg_pwm_enabled = 0x0A;
+   constexpr uint8_t _hreg_pwm_mode = 0x0B;
+   constexpr uint8_t _hreg_pwm_top = 0x0C;
+   constexpr uint8_t _hreg_pwm_cs = 0x0D;
+   constexpr uint8_t _hreg_pwm_duty9 = 0x0E;   // R
+   constexpr uint8_t _hreg_pwm_duty10 = 0x0F;  // R
+   constexpr uint8_t _hreg_pwm_freq = 0x10;    // R
+   constexpr uint8_t _hreg_pwm_lo_limit = 0x11;
+   constexpr uint8_t _hreg_pwm_hi_limit = 0x12;
 
-constexpr uint8_t _coil_pwm_configured = 0x00;
-constexpr uint8_t _coil_dir9 = 0x01;
-constexpr uint8_t _coil_pwm_start9 = 0x02;
-constexpr uint8_t _coil_dir10 = 0x03;
-constexpr uint8_t _coil_pwm_start10 = 0x04;
+   constexpr uint8_t _coil_pwm_configured = 0x00;
+   constexpr uint8_t _coil_dir9 = 0x01;
+   constexpr uint8_t _coil_pwm_start9 = 0x02;
+   constexpr uint8_t _coil_dir10 = 0x03;
+   constexpr uint8_t _coil_pwm_start10 = 0x04;
 
-//** Stepper Driver Settings 0x1E - 0x28 (30-40)
-constexpr uint8_t _hreg_stepper_power = 0x1E;
-constexpr uint8_t _hreg_stepper_resolution = 0x1F;
-constexpr uint8_t _err_freq_change = 0x64;
+   //** Stepper Driver Settings 0x1E - 0x28 (30-40)
+   constexpr uint8_t _hreg_stepper_power = 0x1E;
+   constexpr uint8_t _hreg_stepper_resolution = 0x1F;
+   constexpr uint8_t _err_freq_change = 0x64;
 }
 
 namespace PWM {
@@ -67,18 +67,30 @@ namespace PWM {
 }
 float frq_lo_limit = 122;
 float frq_hi_limit = 20000;
+static volatile uint16_t pwmPendingTop = 0;      // 0 = no frequency change waiting
 
 #pragma region Objects & Handlers
    ModbusSerial mb (MbSerial, 1);
 #pragma endregion
 
 #pragma region Function Prototypes
-// float setPWMMode(PWM::PWM_MODE m);
-// float setPWMFrequency(float freq_hz);
-// void setPWMDuty(float duty, uint8_t pin = 0);
-void pwmOff(uint16_t PIN_NO = 0 );
 void pwmOn (uint16_t PIN_NO = 0);
+void pwmOff(uint16_t PIN_NO = 0);
 
+static float setTimer   (PWM::PWM_MODE mode, float freq);
+float setPWMMode        (PWM::PWM_MODE m);
+float setPWMFrequency   (float freqHz);
+float changePWMFrequency(float freq_hz);
+void  setPWMDuty        (float duty, uint8_t pin = 0);
+
+static uint16_t dutyToOCR     (float duty, uint16_t top, PWM::PWM_MODE m);
+static uint8_t  comBits       ();
+static void     wgmBits       (PWM::PWM_MODE m, uint8_t &a, uint8_t &b);
+uint8_t         getControlWord(uint16_t PIN_NO);
+static bool     isPwmMode     (PWM::PWM_MODE mode);
+
+static void updatePins   ();
+void        update_params();
 #pragma endregion
 
 void setup() {
@@ -91,6 +103,13 @@ void setup() {
 
    delay(250);
 
+   setPWMMode(PWM::FAST_PWM_PH_CORRECT);
+   setPWMFrequency(5000.0f);
+   
+   setPWMDuty(0.5f, 9);
+   pwmOff();   // reset, clean state
+
+   delay(250);
    // registers hold a value of max 65535
    // to write higher values, split them, in 2 16-bit registers.
    mb.setAdditionalServerData ("DM542T CONTROLLER"); //Report Server ID function (0x11) 
@@ -106,7 +125,7 @@ void setup() {
    mb.addHreg(ADDR::_hreg_pwm_hi_limit, frq_hi_limit);
 
 
-   mb.addHreg(ADDR::_hreg_set_pwm_duty9, (int)(PWM::pwmDuty9 * 100));
+   mb.addHreg(ADDR::_hreg_set_pwm_duty9,  (int)(PWM::pwmDuty9 * 100));
    mb.addHreg(ADDR::_hreg_set_pwm_duty10, (int)(PWM::pwmDuty10 * 100));
    mb.addHreg(ADDR::_hreg_set_pwm_freq, PWM::pwmFreqReq);
 
@@ -116,9 +135,9 @@ void setup() {
    mb.addCoil(ADDR::_coil_dir10, false);
    mb.addCoil(ADDR::_coil_pwm_start10, false);
  
-   TCCR1A = 0;            // Clean timer
-   TCCR1B = 0;
-   TCNT1  = 0;
+   // TCCR1A = 0;            // Clean timer
+   // TCCR1B = 0;
+   // TCNT1  = 0;
    // The timer is in ph correct mode, so the counter goes up then down
    /* To calculate the output frequency, divide the clock hz by the prescaler to get the time it gets for one ramp:
    f_clk (Clock) = 16MHz = 16 000 000Hz
@@ -129,18 +148,18 @@ void setup() {
    500 Hz = 16 000 000 / (2 * 1 * top) => top = 16 000 000 / (2 * 500) = 16000
    OCRA is the value to count up to, before the counter goes down, so for a 50% duty cycle, the OCRA is duty * TOP
    */
-   ICR1  = 16000;           // TOP -> 40 kHz
-   OCR1A = 8000;           // 50% duty on D9 (OCR1 is duty*ICR1)
-   OCR1B = 100;           // 50% duty on D10
+   // ICR1  = 16000;           // TOP -> 40 kHz
+   // OCR1A = 8000;           // 50% duty on D9 (OCR1 is duty*ICR1)
+   // OCR1B = 100;           // 50% duty on D10
 
    // Non-inverting output on both channels, WGM11 = 1 (mode 10, low bits)
-   TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
+   // TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
 
    // WGM13 = 1 (mode 10, high bits), CS10 = 1 -> prescaler /1, timer starts
-   TCCR1B = _BV(WGM13) | _BV(CS10);
- 
-   delay(1000);
+   // TCCR1B = _BV(WGM13) | _BV(CS10);
+   delay(250);
    update_params();  // update modbus data
+   
 }
 
 #define pwmPin(condition, pin) (condition)? pwmOn(pin) : pwmOff(pin);
@@ -165,23 +184,13 @@ void loop() {
 
 #pragma region Functions
 // ================ Basic Control ================
-uint8_t getControlWord(uint16_t PIN_NO){
-   const bool start_W0 = (PIN_NO == 0 || PIN_NO == 9);    
-   const bool start_W1 = (PIN_NO == 0 || PIN_NO == 10);  
-   // add more here
-   uint8_t control = 0;
-   if (!start_W0 && !start_W1) return 0;    // nothing to do
-   if (start_W0) control |= 0b01;   
-   if (start_W1) control |= 0b10; 
-   return control;
-}
 
-void pwmOff(uint16_t PIN_NO ){   
+void pwmOff(uint16_t PIN_NO){   
    PWM::pwmEnabled &= ~getControlWord(PIN_NO);
    updatePins();
 }
 
-void pwmOn(uint16_t PIN_NO ){
+void pwmOn(uint16_t PIN_NO){
    PWM::pwmEnabled |= getControlWord(PIN_NO);
    updatePins();
 }
@@ -193,14 +202,6 @@ static void updatePins() {
   TCCR1A = (TCCR1A & 0x0F) | comBits();
 }
 
-static uint8_t comBits() {
-  const bool pwm = isPwmMode(PWM::pwmMode);
-  uint8_t com = 0;
-  if (PWM::pwmEnabled & 1) com |= pwm ? _BV(COM1A1) : _BV(COM1A0);
-  if (PWM::pwmEnabled & 2) com |= pwm ? _BV(COM1B1) : _BV(COM1B0);
-  return com;
-}
-
 static bool isPwmMode(PWM::PWM_MODE mode) {
   return mode == PWM::PH_CORRECT || 
          mode == PWM::FAST_PWM   || 
@@ -208,34 +209,96 @@ static bool isPwmMode(PWM::PWM_MODE mode) {
 }
 // ================ /Basic Control/ ================
 
-
 // ================  PWM Control  ================
-/* IN PROGRESS*/
+
 // Set frequency in Hz (shared by pins 9 and 10). Returns the actual frequency, or 0. 
-float setPWMFrequency(float freqHz) {
-   // TODO: Add constrain if defined upper/lower bounds?
-   if (freqHz <= 0.0f) return 0.0f;
-   return 1.0f;
+//TODO:: Add a way to also select which timer. (Maybe wrap this up in a lib, add pointers to OCRA/OCRB registers and use that)
+float setPWMFrequency(float freqHz) { 
+   return setTimer(PWM::pwmMode, constrain(freqHz, frq_lo_limit, frq_hi_limit));
+}
+
+float setPWMMode(PWM::PWM_MODE m) {
+  if (PWM::pwmFreqReq <= 0.0f) { // frq not set, just remember the pwm mode
+    PWM::pwmMode = m;
+    return 0.0f;
+  }  
+  return setTimer(m, PWM::pwmFreqReq);
 }
 
 // Duty 0.0 - 1.0 for pin 9, 10, or both (0). Only has an effect in the PWM modes. 
 void setPWMDuty(float duty, uint8_t pin) {
-   duty = constrain(duty, 0.0f, 1.0f);
+   if (!PWM::pwmConfigured || !isPwmMode(PWM::pwmMode)) return;
+   if (!(pin == 9) && !(pin == 10) && !(pin == 0)) return;
 
-   if (pin == 0 || pin == 9)  PWM::pwmDuty9  = duty;
-   if (pin == 0 || pin == 10) PWM::pwmDuty10 = duty;
+   const uint16_t OCR = dutyToOCR(constrain(duty, 0.0f, 1.0f), PWM::pwmTop, PWM::pwmMode);
 
-   //TODO: Find a way to convert duty to OCR since OCR controls duty.
+   switch (pin){
+      case 9:
+         PWM::pwmDuty9 = duty;
+         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1A = OCR;
+         }
+         break;
+      case 10:
+         PWM::pwmDuty10 = duty;
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1B = OCR;
+         }
+         break;
+      case 0:
+         PWM::pwmDuty10 = duty;
+         PWM::pwmDuty9  = duty;
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1A = OCR;
+            OCR1B = OCR;
+         }
+      default:
+         return;
+   }
+      
 }
 
-static float setTimer(PWM::PWM_MODE m, float freq) {
-   if (!(freq > 0.0f)) return 0.0f;
+// Change PWM frq of an already running timer
+float changePWMFrequency(float freq_hz){
+   if (freq_hz <= 0.0f) return 0.0f;
+   if ((!PWM::pwmConfigured) || (PWM::pwmMode != PWM::FAST_PWM_PH_CORRECT)) return 0.0f;
 
-   uint8_t idx = 0;
+   const uint16_t _prescaler = PWM::PWM_PRESCALERS[PWM::pwmCS-1]; // select current prescaler
+   const float t = (float)F_CPU / (2.0f * _prescaler * freq_hz);
+   if (t > 65535.0f || t < 40.0f) return 0.0f;                    // selected frequency doesn't fit the current prescaler
+
+   const uint16_t top    = (uint16_t)lroundf(t);
+   const float    actual = (float)F_CPU / (2.0f * _prescaler * (float)top);
+
+   if (top == PWM::pwmTop) return actual;
+   // Need to calculate twice because the timer would cahnge the frequency for both pins
+   const uint16_t a = dutyToOCR(PWM::pwmDuty9,  top, PWM::pwmMode);   
+   const uint16_t b = dutyToOCR(PWM::pwmDuty10, top, PWM::pwmMode);
+
+   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {                  
+      do {                                               
+         TIFR1 = _BV(TOV1);
+         OCR1A = a;
+         OCR1B = b;
+      } while (TIFR1 & _BV(TOV1));
+
+      pwmPendingTop = top;                               // the ISR applies it at the next BOTTOM
+      TIMSK1 |= _BV(TOIE1);
+   }
+
+   PWM::pwmTop     = top;
+   PWM::pwmFreqReq = freq_hz;
+   return actual;
+}
+
+static float setTimer(PWM::PWM_MODE mode, float freq) {
+   if (freq <= 0.0f) return 0.0f;
+
+   uint8_t idx  = 0;
    uint16_t top = 0;
    float actual;
 
-   if (m == PWM::NORMAL) {
+   if (mode == PWM::NORMAL) {
       // Free-running 16-bit counter: only the prescaler sets the rate (overflow frequency).
       float bestErr = 1e30f;              // get some really smol value
       for (uint8_t i = 0; i < 5; i++) {   // find the prescaler with the best error margin 
@@ -249,8 +312,8 @@ static float setTimer(PWM::PWM_MODE m, float freq) {
       actual = (float)F_CPU / (65536.0f * PWM::PWM_PRESCALERS[idx]);
    } else {  
       // f = F_CPU / (k * N * (TOP + off))
-      const float k      = (m == PWM::FAST_PWM) ? 1.0f : 2.0f;
-      const float offset = (m == PWM::PH_CORRECT || m == PWM::FAST_PWM_PH_CORRECT) ? 0.0f : 1.0f;
+      const float k      = (mode == PWM::FAST_PWM) ? 1.0f : 2.0f;
+      const float offset = (mode == PWM::PH_CORRECT || mode == PWM::FAST_PWM_PH_CORRECT) ? 0.0f : 1.0f;
       float t = 0.0f;
       for (; idx < 5; idx++) {               // find the highest prescaler that yields a valid value
          t = (float)F_CPU / (k * PWM::PWM_PRESCALERS[idx] * freq) - offset;
@@ -263,11 +326,11 @@ static float setTimer(PWM::PWM_MODE m, float freq) {
    const uint8_t cs = idx + 1;
 
    // Nothing changed -> don't restart the timer
-   if (PWM::pwmConfigured && m == PWM::pwmMode && top == PWM::pwmTop && cs == PWM::pwmCS)
+   if (PWM::pwmConfigured && mode == PWM::pwmMode && top == PWM::pwmTop && cs == PWM::pwmCS)
       return actual;
 
    // Store the new data 
-   PWM::pwmMode         = m;
+   PWM::pwmMode         = mode;
    PWM::pwmTop          = top;
    PWM::pwmCS           = cs;
    PWM::pwmFreqReq      = freq;
@@ -277,14 +340,14 @@ static float setTimer(PWM::PWM_MODE m, float freq) {
    pinMode(10, OUTPUT);
    
    uint8_t wa, wb;
-   wgmBits(m, wa, wb);
+   wgmBits(mode, wa, wb);
    const uint8_t com = comBits();
-   const uint16_t a = dutyToOCR(PWM::pwmDuty9, top, m);  // math outside the atomic block
-   const uint16_t b = dutyToOCR(PWM::pwmDuty10, top, m);
+   const uint16_t a = dutyToOCR(PWM::pwmDuty9, top, mode);  // math outside the atomic block
+   const uint16_t b = dutyToOCR(PWM::pwmDuty10, top, mode);
 
    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
       TIMSK1 &= ~_BV(TOIE1);  
-      // pwmPendingTop = 0;   // cancel any pending on-the-fly change
+      pwmPendingTop = 0;   // cancel any pending on-the-fly change
       TCCR1B = 0;  // stop the clock
       TCCR1A = 0;  // Normal mode, pins disconnected: OCR1x written immediately
       ICR1 = top;
@@ -299,7 +362,38 @@ static float setTimer(PWM::PWM_MODE m, float freq) {
    return actual;
 }
 
+ISR(TIMER1_OVF_vect) {
+  const uint16_t top = pwmPendingTop;
+  if (top && (uint16_t)(TCNT1 + 10) < top) {     // counter must not have reached the new TOP yet
+    ICR1 = top;
+    pwmPendingTop = 0;
+    TIMSK1 &= ~_BV(TOIE1);
+  }
+  // otherwise: try again at the next BOTTOM (the interrupt stays enabled)
+}
+
 // Select the correct Waveform Generation Mode bits based on the PWM Mode
+
+
+// Selects / calculcates the output compare registers values based on PWM mode.
+// ================ /PWM Control/ ================
+
+// ================ Helper Functions ================
+static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
+  switch (m) {
+    case PWM::PH_CORRECT:
+    case PWM::FAST_PWM_PH_CORRECT:
+      return (uint16_t)lroundf(duty * top);  // 0..TOP
+    case PWM::FAST_PWM:
+      {
+        uint32_t v = (uint32_t)lroundf(duty * ((float)top + 1.0f));  // period is TOP+1 clocks
+        return (v > top) ? top : (uint16_t)v;                        // OCR = TOP -> constant high
+      }
+    default:
+      return 0;  // duty not applicable
+  }
+}
+
 static void wgmBits(PWM::PWM_MODE m, uint8_t &a, uint8_t &b) {
   switch (m) {
     case PWM::FAST_PWM_PH_CORRECT:
@@ -325,28 +419,32 @@ static void wgmBits(PWM::PWM_MODE m, uint8_t &a, uint8_t &b) {
   }
 }
 
-// Selects / calculcates the output compare registers values based on PWM mode.
-static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
-  switch (m) {
-    case PWM::PH_CORRECT:
-    case PWM::FAST_PWM_PH_CORRECT:
-      return (uint16_t)lroundf(duty * top);  // 0..TOP
-    case PWM::FAST_PWM:
-      {
-        uint32_t v = (uint32_t)lroundf(duty * ((float)top + 1.0f));  // period is TOP+1 clocks
-        return (v > top) ? top : (uint16_t)v;                        // OCR = TOP -> constant high
-      }
-    default:
-      return 0;  // duty not applicable
-  }
+static uint8_t comBits() {
+  const bool pwm = isPwmMode(PWM::pwmMode);
+  uint8_t com = 0;
+  if (PWM::pwmEnabled & 1) com |= pwm ? _BV(COM1A1) : _BV(COM1A0);
+  if (PWM::pwmEnabled & 2) com |= pwm ? _BV(COM1B1) : _BV(COM1B0);
+  return com;
 }
-// ================ /PWM Control/ ================
+
+uint8_t getControlWord(uint16_t PIN_NO){
+   const bool start_W0 = (PIN_NO == 0 || PIN_NO == 9);    
+   const bool start_W1 = (PIN_NO == 0 || PIN_NO == 10);  
+   // add more here
+   uint8_t control = 0;
+   if (!start_W0 && !start_W1) return 0;    // nothing to do
+   if (start_W0) control |= 0b01;   
+   if (start_W1) control |= 0b10; 
+   return control;
+}
+// ================ /Helper Functions/ ================
+
 
 // ================ Modbus Communication ================
 void update_params(){   // update modbus data
    mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
    mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
-   // mb.setHreg(ADDR::_hreg_pwm_freq,    PWM::pwmFreq);
+   mb.setHreg(ADDR::_hreg_pwm_freq,     PWM::pwmFreqReq);
 }
 // ================ /Modbus Communication/ ================
 #pragma endregion

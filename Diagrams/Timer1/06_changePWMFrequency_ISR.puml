@@ -1,0 +1,80 @@
+@startuml 06_changePWMFrequency_ISR
+!include _style.iuml
+title changePWMFrequency(f) + ISR(TIMER1_OVF_vect): glitch-free frequency change (mode 8 only)
+
+participant "caller\n(loop / ramp)" as C
+participant "changePWMFrequency()" as F
+participant "Timer1 hardware\n(mode 8)" as T #E3F2E1
+participant "ISR(TIMER1_OVF_vect)" as I
+
+C -> F : changePWMFrequency(freq_hz)
+
+group checks (any failure -> return 0, nothing changed)
+  F -> F : freq_hz > 0 ?
+  F -> F : configured AND mode == FAST_PWM_PH_CORRECT ?
+  F -> F : N = current prescaler (pwmCS)\nt = F_CPU / (2 * N * freq_hz)
+  F -> F : 40 <= t <= 65535 ?
+  note right of F
+    The prescaler is NOT changed here.
+    t < 40  -> above ~200 kHz (N = 1)
+    t > 65535 -> needs a bigger prescaler,
+    use setPWMFrequency() instead.
+  end note
+end
+
+F -> F : TOP = round(t)\nactual = F_CPU / (2 * N * TOP)
+alt TOP == pwmTop
+  F --> C : return actual (nothing to do)
+end
+F -> F : a = dutyToOCR(pwmDuty9, TOP)\nb = dutyToOCR(pwmDuty10, TOP)\n(float math, interrupts still on)
+
+group #FBE3E3 ATOMIC_BLOCK (interrupts off, a few us)
+  loop until no BOTTOM passed during the writes
+    F -> T : TIFR1 = TOV1 (write 1 = clear flag)
+    F -> T : OCR1A = a, OCR1B = b\n(into the BUFFER registers)
+    F -> T : read TIFR1.TOV1
+  end
+  F -> F : pwmPendingTop = TOP
+  F -> T : TIMSK1 |= TOIE1 (enable overflow interrupt)
+end
+F -> F : pwmTop = TOP\npwmFreqReq = freq_hz
+F --> C : return actual  (returns in microseconds)
+
+== the current PWM period finishes with the OLD values ==
+
+T -> T : counter reaches BOTTOM (TCNT1 = 0)
+note over T
+  At BOTTOM in mode 8, in hardware:
+  1. OCR1A/B buffer -> active (new duty)
+  2. TOV1 flag set -> overflow interrupt
+  ICR1 (TOP) is NOT buffered, so the
+  ISR must write it at the right moment.
+end note
+T -> I : TIMER1_OVF interrupt
+
+I -> I : top = pwmPendingTop
+alt top != 0 AND TCNT1 + 10 < top
+  note right of I
+    Counter is counting up from 0 and is
+    still safely below the new TOP.
+  end note
+  I -> T : ICR1 = top
+  I -> I : pwmPendingTop = 0
+  I -> T : TIMSK1 &= ~TOIE1 (one-shot: disable again)
+  T -> T : this period already runs with\nnew TOP and new duty
+else counter too close to (or past) the new TOP
+  note right of I
+    Writing ICR1 now could make the counter
+    miss TOP. Do nothing, the interrupt stays
+    enabled -> retry at the next BOTTOM.
+  end note
+end
+
+note across
+  Why not just write ICR1 directly? It is not double-buffered: if the new TOP is
+  below the current TCNT1, the counter runs on to 0xFFFF and back = one very long pulse.
+  Why not wait for BOTTOM with interrupts off? That was the first version: up to one full
+  PWM period with interrupts off lost UART bytes at 115200 baud (the CODESYS reset loop).
+  setTimer() cancels any pending change (TOIE1 off, pwmPendingTop = 0) before it restarts.
+end note
+@enduml

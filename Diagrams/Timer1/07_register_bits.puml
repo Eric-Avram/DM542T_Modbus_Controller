@@ -1,0 +1,56 @@
+@startuml 07_register_bits
+!include _style.iuml
+title Timer1 control registers: which bits the code sets, and from where
+
+map "TCCR1A" as A $REG {
+  bit 7  COM1A1 => comBits(): pin 9 PWM
+  bit 6  COM1A0 => comBits(): pin 9 toggle
+  bit 5  COM1B1 => comBits(): pin 10 PWM
+  bit 4  COM1B0 => comBits(): pin 10 toggle
+  bit 3:2 => reserved
+  bit 1  WGM11 => wgmBits() -> wa
+  bit 0  WGM10 => wgmBits() -> wa (always 0)
+}
+
+map "TCCR1B" as B $REG {
+  bit 7  ICNC1 => 0
+  bit 6  ICES1 => 0
+  bit 5 => reserved
+  bit 4  WGM13 => wgmBits() -> wb
+  bit 3  WGM12 => wgmBits() -> wb
+  bit 2:0  CS12:10 => cs = prescaler index + 1
+}
+
+map "TIMSK1 / TIFR1" as I $REG {
+  TIMSK1 bit 0  TOIE1 => on: changePWMFrequency()\noff: ISR, setTimer()
+  TIFR1 bit 0  TOV1 => set by hardware at BOTTOM (mode 8/10)\ncleared by writing 1
+}
+
+map "16-bit registers" as R $REG {
+  ICR1 => TOP (setTimer, ISR)
+  OCR1A => duty pin 9 (setTimer, setPWMDuty, changePWMFrequency)
+  OCR1B => duty pin 10 (same)
+  TCNT1 => counter, reset to 0 by setTimer
+}
+
+A -[hidden]right- B
+I -[hidden]right- R
+A -[hidden]down- I
+
+legend bottom
+  **WGM13:10 per PWM_MODE (from wgmBits)**
+  |= PWM_MODE |= AVR mode |= WGM13 |= WGM12 |= WGM11 |= WGM10 |= TOP |= OCR1x updated at |= TOV1 set at |
+  | NORMAL | 0 Normal | 0 | 0 | 0 | 0 | 0xFFFF | immediately | MAX |
+  | FAST_PWM_PH_CORRECT | 8 Phase & freq. correct | 1 | 0 | 0 | 0 | ICR1 | BOTTOM | BOTTOM |
+  | PH_CORRECT | 10 Phase correct | 1 | 0 | 1 | 0 | ICR1 | TOP | BOTTOM |
+  | CTC | 12 CTC | 1 | 1 | 0 | 0 | ICR1 | immediately | MAX |
+  | FAST_PWM | 14 Fast PWM | 1 | 1 | 1 | 0 | ICR1 | BOTTOM | TOP |
+
+  **COM1x1:0 (from comBits)**: 00 = pin disconnected (normal I/O, PORTB level), 01 = toggle on match (NORMAL/CTC),
+  10 = non-inverting PWM (all PWM modes). 11 (inverting) is not used.
+
+  **CS12:10 (cs)**: 1 = clk/1, 2 = clk/8, 3 = clk/64, 4 = clk/256, 5 = clk/1024, 0 = clock stopped.
+
+  **Frequency**: mode 8/10: f = 16 MHz / (2 * N * TOP)    mode 14: f = 16 MHz / (N * (TOP + 1))
+endlegend
+@enduml

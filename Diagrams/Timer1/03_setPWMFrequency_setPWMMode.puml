@@ -1,0 +1,38 @@
+@startuml 03_setPWMFrequency_setPWMMode
+!include _style.iuml
+title setPWMFrequency(f) and setPWMMode(m): thin wrappers around setTimer()
+
+|setPWMFrequency(freqHz)|
+start
+:f = constrain(freqHz, frq_lo_limit, frq_hi_limit);
+note right
+  Defaults: 122 Hz .. 20000 Hz.
+  The clamped value is what gets
+  stored in pwmFreqReq.
+end note
+:return setTimer(pwmMode, f);
+note right
+  Keeps the current mode.
+  Restarts the timer only if
+  TOP or prescaler change.
+end note
+stop
+
+|setPWMMode(m)|
+start
+if (pwmFreqReq <= 0\n(no frequency set yet)?) then (yes)
+  :pwmMode = m
+  (just remembered, hardware untouched);
+  :return 0;
+  stop
+else (no)
+  :return setTimer(m, pwmFreqReq);
+  note right
+    Same frequency, new mode:
+    TOP is recalculated for the new
+    mode's formula. On failure (0)
+    the old mode stays active.
+  end note
+  stop
+endif
+@enduml
