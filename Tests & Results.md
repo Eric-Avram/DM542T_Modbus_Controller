@@ -1,14 +1,18 @@
-# Test & Results Report
+# Tests & Results Report
 
 ## 1. Modbus RTU Communication
 
 ## 2. PWM Generation
+**Test setup:** Rigol DHO814 oscilloscope, standard probe, DM542T connected, motor as load.
+
+**Note:** The rise time values were measured incorrectly and will be re-measured.
+
 | Project Version 	| Frequency (Target) 	| Frequency (Result) 	| Pulse Duty (Target) 	| Pulse Duty (Result) 	| Overshoot % 	| Rise Time	| Evidence File|
 |-----------------	|--------------------	|--------------------	|---------------------	|---------------------	|-------------	|--------	|------------- |
-|V0.1-AnalogWrite()	|      500Hz (default)|        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results\evidence_00_V01.png)|
-|V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_01_v0.2](Test-Results\evidence_01_V02.png)|
-|V0.3-Timer1 PWM  	|      500Hz         	|       498.41       	|       50%           	|          50.0%      	|      14%    	|    64ns	|[evidence_02_V03](Test-Results\evidence_02_V03.png)|
-|v0.4-Timer1 PWM  	|      500Hz         	|        498.43      	|           50%       	|             50%     	|      5%     	|     96ns|[evidence_03_v04](Test-Results\evidence_03_V04.png)|
+|V0.1-AnalogWrite()	|      500Hz (default)|        488.6       	|         50%         	|        50.2%        	|      13-14%  	|   244ns	| [evidence_00_V0.1](Test-Results/evidence_00_V01.png)|
+|V0.2-Bit-Banging 	|      500Hz (default)|      486.25        	|         50%         	|        53.4%        	|      13-14% 	| 25.575ns| [evidence_01_v0.2](Test-Results/evidence_01_V02.png)|
+|V0.3-Timer1 PWM  	|      500Hz         	|       498.41       	|       50%           	|          50.0%      	|      14%    	|    64ns	|[evidence_02_V03](Test-Results/evidence_02_V03.png)|
+|v0.4-Timer1 PWM  	|      500Hz         	|        498.43      	|           50%       	|             50%     	|      5%     	|     96ns|[evidence_03_v04](Test-Results/evidence_03_V04.png)|
 <!-- |                 	|                    	|                    	|                     	|                     	|             	|        	|              | -->
 <!-- |                 	|                    	|                    	|                     	|                     	|             	|        	|              | -->
 
@@ -64,7 +68,7 @@ After adding a 22Ohms resistor on the PWM output pin (PIN9) and powering the Ard
 |-----------|-----------|-------------------|-------------------      |-----------------------|
 |   Timer0  |   5 & 6   |  16MHz            |Arduino Time Functions   |          5            |                       
 |   Timer1  |   9 & 10  |  16MHz            |   None                  |          5            |
-|   Timer2  |   3 & 11  |  16MHz            |   None                  |          8            |
+|   Timer2  |   3 & 11  |  16MHz            |   None                  |          7            |
 
 <!-- ### Registers  -->
 
@@ -112,7 +116,8 @@ The code picks the prescaler with the smallest error $\lvert f_{prescaler} - f_{
 $$ D = \frac{reg_{duty}}{100} \qquad reg_{duty} = D \cdot 100 $$
 
 **Frequency clamp** (`setPWMFrequency`)
-$$ f = \min\left(\max(f_{req},\ f_{lo}),\ f_{hi}\right) \qquad f_{lo} = 122\ \text{Hz},\ f_{hi} = 20000\ \text{Hz} $$
+$$ f = \min\left(\max(f_{req},\ f_{lo}),\ f_{hi}\right) \qquad f_{lo} = 125\ \text{Hz},\ f_{hi} = 20000\ \text{Hz} $$
+These are the defaults. The limits are read from the lo/hi limit registers; if a limit is invalid, the default is used.
 
 **ISR condition for writing the new TOP** (`TIMER1_OVF_vect`)
 $$ TCNT1 + 10 < TOP_{new} $$
@@ -146,6 +151,23 @@ For example: 0.03% at 5 kHz (TOP = 1600), 0.4% at 20 kHz (TOP = 400), up to 1.25
 
 <details><summary> High Overshoot when generating PWM </summary>
 
-* **Problem definition:**
-* **Solution (HW)**: Add a ~22 Ohm resistor on the PWM pin. This raises time from 10ns to 12ns, but brings down overshoot from ~12% to ~5% at 500Hz  
-</detail>
+* **Problem definition:** The PWM signal shows a high overshoot (~12-14%) on the rising edge, as seen in the evidence for V0.1 to V0.3.
+* **Solution (HW)**: Add a ~22 Ohm resistor on the PWM pin. This raises time from 10ns to 12ns, but brings down overshoot from ~12% to ~5% at 500Hz (rise time to be re-measured)
+* **Status:** <span style="color: green;"> Closed (Solution HW) </span>
+</details>
+
+<details><summary> Glitches when changing the frequency on the fly </summary>
+
+* **Problem definition:** ICR1 (TOP) is not double-buffered, so writing it directly while the timer is running can happen at any point in the period. If the new TOP is lower than the current counter value, the counter misses it and runs up to 0xFFFF before wrapping, leading to a very long pulse. When driving a stepper motor, this means a +-1 step that can't really be recorded.
+* **Solution 1 (SW):** Wait for the BOTTOM flag (TOV1) with interrupts disabled, then write ICR1. This worked, but caused lost Modbus requests (see next entry).
+* **Solution 2 (SW):** The OCR values are buffered and only loaded at BOTTOM, so they can be written anytime. If the new TOP is higher than the current one, ICR1 can also be written directly, since the counter can't have passed it yet. If the new TOP is lower, a one-shot Timer1 overflow interrupt writes it right after BOTTOM. The downside is a delay of up to 1 period between the command and the change.
+* **Status:** <span style="color: green;"> Closed (Solution 2) </span>
+</details>
+
+<details><summary> Modbus requests lost while changing the frequency </summary>
+
+* **Problem definition:** The first changePWMFrequency() busy-waited for the BOTTOM flag with interrupts disabled, up to one full PWM period (1ms at 1kHz). At 115200 Baud a byte arrives every ~87us and the UART can only hold ~2 bytes, so with interrupts off for more than ~170us bytes get lost. The request then fails the CRC check, the Nano doesn't answer and Codesys resets the com port, which leads to the reset loop described above. It happened mostly between 1kHz and 6kHz, with Codesys polling every 100ms (stable at 500ms).
+* **Solution (SW):** Interrupt based frequency change (Solution 2 of the previous entry), so the function returns in microseconds. Slow float math (lroundf, powf) is also kept outside of the ATOMIC_BLOCK.
+* **Note:** The lost bytes were never measured directly; a CRC error counter would confirm it (see DIA-3 in the README). The theory fits all the symptoms and the fix worked.
+* **Status:** <span style="color: green;"> Closed (Solution SW) </span>
+</details>
