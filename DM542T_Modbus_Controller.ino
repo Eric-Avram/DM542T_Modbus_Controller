@@ -106,6 +106,8 @@ static bool     isPwmMode     (PWM::PWM_MODE mode);
 
 static void updatePins   ();
 void        update_params();
+
+bool rampPWMFrequency(float targetHz, float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit, float accelHzPerS = 500.0f);
 #pragma endregion
 
 void setup() {
@@ -174,11 +176,13 @@ void loop() {
       const uint16_t hi_limit = mb.hreg(ADDR::_hreg_pwm_hi_limit);
       if (isValidFrequencyRange(lo_limit, hi_limit)){
          if (PWM::pwmError == PWM::FRQ_HI_LO_INVALID) PWM::pwmError = PWM::NONE; // reset error once the range reset
-         PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, lo_limit, hi_limit);
+         // PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, lo_limit, hi_limit);
+         rampPWMFrequency(freq_hz, lo_limit, hi_limit, 2000.0f);
       }
       else {
          PWM::pwmError = PWM::FRQ_HI_LO_INVALID;   
-         PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit);
+         // PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit);
+         rampPWMFrequency(freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit, 2000.0f);  
       }
       update_params();
    }
@@ -405,6 +409,30 @@ ISR(TIMER1_OVF_vect) {
   }
   // otherwise: try again at the next BOTTOM (the interrupt stays enabled)
 }
+
+// Call every loop() with the frequency setpoint.
+// Moves the output toward targetHz at accelHzPerS (Hz/s = steps/s^2).
+// Returns true while ramping, false when on target (or the timer isn't set up).
+// Mostly should work as a linear ramp.
+bool rampPWMFrequency(float targetHz, float lo_limit, float hi_limit, float accelHzPerS) {
+   if (PWM::pwmFreqReq == constrain(targetHz, lo_limit, hi_limit)) return false;
+   if (!(accelHzPerS > 0.0f)) return false;
+
+   static uint32_t lastMs = millis();
+   const uint32_t now    = millis();
+   const uint32_t passed = min(now - lastMs, 10UL);
+   if (passed == 0) return PWM::pwmFreqReq != targetHz;
+   lastMs = now;
+
+   const float df   = accelHzPerS * passed * 0.001f;
+   const float next = (targetHz > PWM::pwmFreqReq) ? min(PWM::pwmFreqReq + df, targetHz)
+                                                   : max(PWM::pwmFreqReq - df, targetHz);
+   const float actual = changePWMFrequency(next, lo_limit, hi_limit);
+   if (actual == 0.0f) return false;
+   PWM::pwmFreqActual = actual;
+   return next != targetHz;
+}
+
 // ================ /PWM Control/ ================
 
 // ================ Helper Functions ================
