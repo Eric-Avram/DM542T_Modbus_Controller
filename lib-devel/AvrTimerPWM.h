@@ -1,0 +1,95 @@
+#pragma once
+#include <Arduino.h>
+#include <util/atomic.h>   
+/**
+ * @enum TIMER
+ * @brief AVR timers selection
+ */
+enum TIMER {
+    TIMER_0 = 0,
+    TIMER_1 = 1,
+    TIMER_2 = 2
+};
+/**
+ * @enum PWM_MODE
+ * @brief PWM modes for AVR timers, see datasheet 
+ * for details at https://avr-guide.github.io/timers-on-the-atmega328/
+ */
+enum PWM_MODE {
+    NORMAL,
+    PH_CORRECT,
+    CTC,
+    FAST_PWM,
+    FAST_PWM_PH_CORRECT
+};
+/**
+ * @enum PWM_ERROR
+ * @brief Error codes for PWM configuration
+ */
+enum PWM_ERROR {
+    NONE = 0,
+    PWM_MODE_INCORRECT,
+    PWM_UNCONFIGURED,
+    FRQ_TOO_LOW,
+    PRESCALER_OUT_OF_BOUNDS,
+    FRQ_CONSTRAINTED_LO,
+    FRQ_CONSTRAINTED_HI,
+    FRQ_OUT_OF_BOUNDS,
+    FRQ_HI_LO_INVALID
+};
+
+constexpr uint16_t PWM_PRESCALERS[] = { 1, 8, 64, 256, 1024 }; // add up to 8 when implementing timer 2
+constexpr uint16_t frq_default_lo_limit = 125;  // prescaler 1 gives ~122.07Hz, so choose a value above that to make sure default is valid.
+constexpr uint16_t frq_default_hi_limit = 20000;
+
+/**
+ * @class AvrTimerPWM
+ * @brief Class to generate PWM signals using AVR timers
+ */
+
+ class AvrTimerPWM {
+    public:
+        /**
+         * @brief Constructor
+         * @param frequency The desired PWM frequency in Hz
+         * @param dutyCycle The desired duty cycle as a percentage (0.0-1.0)
+         */
+        AvrTimerPWM(float frequency, float dutyCycle);
+        // AvrTimerPWM(const float& frequency, const float& dutyCycle);
+
+        void attach(TIMER timer);
+        void pwmOn (uint16_t PIN_NO = 0);
+        void pwmOff(uint16_t PIN_NO = 0);
+        float setTimer          (PWM_MODE mode, float freq);
+        float setPWMMode        (PWM_MODE m);
+        float setPWMFrequency   (float freqHz,  float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
+        float changePWMFrequency(float freq_hz, float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
+        void  setPWMDuty        (float duty, uint8_t pin = 0        );
+        
+        void resetError()       { pwmError = PWM_ERROR::NONE; }
+        PWM_ERROR getError()    { return pwmError; }
+        PWM_MODE  getPwmMode()  { return pwmMode;  }
+
+        float     getPwmFrequencyActual()    { return pwmFreqActual; }
+        float     getPwmFrequencyRequested() { return pwmFreqReq;    }
+        float     getPwmDuty9()  { return pwmDuty9;  }
+        float     getPwmDuty10() { return pwmDuty10; }  
+
+        uint16_t  getPwmTop()    { return pwmTop;    }
+        uint8_t   getPwmCS()     { return pwmCS;     }  
+
+        uint8_t   pwmEnabled;       // bit0 = pin 9 connected, bit1 = pin 10 connected
+        bool      pwmConfigured;
+    private:
+        PWM_ERROR  pwmError;
+        PWM_MODE   pwmMode;
+        float      pwmFreqReq;       // last successfully applied frequency request
+        float      pwmFreqActual;    // last successfully applied frequency actual
+        float      pwmDuty9;
+        float      pwmDuty10;
+        uint16_t   pwmTop;
+        uint8_t    pwmCS;
+
+        uint8_t comBits();
+        void updatePins();
+ };

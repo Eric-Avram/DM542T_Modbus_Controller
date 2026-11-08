@@ -3,7 +3,8 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "C:\\Users\\erica\\Documents\\Arduino\\libraries/**"
             ],
             "defines": [
                 "_DEBUG",
@@ -19,19 +20,27 @@
         {
             "name": "Arduino Dev",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "C:/Users/erica/AppData/Local/Arduino15/packages/arduino/hardware/avr/1.8.8/cores/arduino",
+                "C:/Users/erica/AppData/Local/Arduino15/packages/arduino/hardware/avr/1.8.8/variants/eightanaloginputs",
+                "C:/Users/erica/AppData/Local/Arduino15/packages/arduino/hardware/avr/1.8.8/libraries/**",
+                "C:/Users/erica/AppData/Local/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/avr/include",
+                "C:/Users/erica/Documents/Arduino/libraries/**"
             ],
             "defines": [
-                "_DEBUG",
-                "UNICODE",
-                "_UNICODE"
+                "F_CPU=16000000L",
+                "ARDUINO=10819",
+                "ARDUINO_AVR_NANO",
+                "ARDUINO_ARCH_AVR",
+                "__AVR_ATmega328P__"
             ],
-            "windowsSdkVersion": "10.0.26100.0",
-            "compilerPath": "cl.exe",
-            "cStandard": "c17",
-            "cppStandard": "c++17",
-            "intelliSenseMode": "windows-msvc-x64"
+            "compilerPath": "C:/Users/erica/AppData/Local/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-g++.exe",
+            "compilerArgs": ["-mmcu=atmega328p"],
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++11",
+            "intelliSenseMode": "gcc-x86"
         }
+
     ],
     "version": 4
 }

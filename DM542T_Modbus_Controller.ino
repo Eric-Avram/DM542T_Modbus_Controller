@@ -8,7 +8,8 @@
 
 #pragma region Libraries 
    #include <ModbusSerial.h>
-   #include <util/atomic.h>   
+   // #include <util/atomic.h>   
+   #include "src/AvrTimerPWM.h"
 #pragma endregion
 
 #pragma region Pinout
@@ -16,6 +17,7 @@
    constexpr uint8_t DIR_PIN {8U};
 #pragma endregion
 
+AvrTimerPWM PWM_Timer (2500.0f, 0.5f);
 // Namespace for storing modbus addresses
 namespace ADDR {
 
@@ -48,10 +50,11 @@ namespace ADDR {
    constexpr uint8_t _err_freq_change = 0x64;
 }
 
+   // constexpr uint16_t frq_default_hi_limit = 20000;
+   // constexpr uint16_t frq_default_lo_limit = 125;  // prescaler 1 gives ~122.07Hz, so choose a value above that to make sure default is valid.
+/*
 namespace PWM {
    constexpr uint16_t PWM_PRESCALERS[] = { 1, 8, 64, 256, 1024 }; // add up to 8 when implementing timer 2
-   constexpr uint16_t frq_default_lo_limit = 125;  // prescaler 1 gives ~122.07Hz, so choose a value above that to make sure default is valid.
-   constexpr uint16_t frq_default_hi_limit = 20000;
    enum PWM_MODE {
       NORMAL,
       PH_CORRECT,
@@ -83,33 +86,34 @@ namespace PWM {
 }
 
 static volatile uint16_t pwmPendingTop = 0;      // 0 = no frequency change waiting
-
+*/
 #pragma region Objects & Handlers
    ModbusSerial mb (MbSerial, 1);
 #pragma endregion
 
 #pragma region Function Prototypes
-void pwmOn (uint16_t PIN_NO = 0);
-void pwmOff(uint16_t PIN_NO = 0);
+// void pwmOn (uint16_t PIN_NO = 0);
+// void pwmOff(uint16_t PIN_NO = 0);
 
-static float setTimer   (PWM::PWM_MODE mode, float freq);
-float setPWMMode        (PWM::PWM_MODE m);
-float setPWMFrequency   (float freqHz,  float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
-float changePWMFrequency(float freq_hz, float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
-void  setPWMDuty        (float duty, uint8_t pin = 0);
+// static float setTimer   (PWM::PWM_MODE mode, float freq);
+// float setPWMMode        (PWM::PWM_MODE m);
+// float setPWMFrequency   (float freqHz,  float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
+// float changePWMFrequency(float freq_hz, float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit);
+// void  setPWMDuty        (float duty, uint8_t pin = 0);
 
-static uint16_t dutyToOCR     (float duty, uint16_t top, PWM::PWM_MODE m);
-static uint8_t  comBits       ();
-static void     wgmBits       (PWM::PWM_MODE m, uint8_t &a, uint8_t &b);
-uint8_t         getControlWord(uint16_t PIN_NO);
-static bool     isPwmMode     (PWM::PWM_MODE mode);
+// static uint16_t dutyToOCR     (float duty, uint16_t top, PWM::PWM_MODE m);
+// static uint8_t  comBits       ();
+// static void     wgmBits       (PWM::PWM_MODE m, uint8_t &a, uint8_t &b);
+// uint8_t         getControlWord(uint16_t PIN_NO);
+// static bool     isPwmMode     (PWM::PWM_MODE mode);
 
-static void updatePins   ();
+// static void updatePins   ();
 void        update_params();
 
-bool rampPWMFrequency(float targetHz, float lo_limit = PWM::frq_default_lo_limit, float hi_limit = PWM::frq_default_hi_limit, float accelHzPerS = 500.0f);
+bool rampPWMFrequency(float targetHz, float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit, float accelHzPerS = 500.0f);
 #pragma endregion
 
+float pwmFreqReq = 0.0f; 
 void setup() {
    MbSerial.begin (Baudrate, MB_PARITY_EVEN); // prefer this line in accordance with the modbus standard.
    while (! MbSerial);
@@ -119,34 +123,48 @@ void setup() {
    pinMode(PUL_PIN, OUTPUT);
 
    delay(250);
-
-   setPWMMode(PWM::FAST_PWM_PH_CORRECT);
-   PWM::pwmFreqActual = setPWMFrequency(5000.0f);
-   setPWMDuty(0.5f, 9);
-   pwmOff();   // reset, clean state
+   
+   
+   PWM_Timer.setPWMMode(FAST_PWM_PH_CORRECT);
+   // setPWMMode(PWM::FAST_PWM_PH_CORRECT);
+   PWM_Timer.setPWMFrequency(5000.0f);
+   // PWM::pwmFreqActual = setPWMFrequency(5000.0f);
+   PWM_Timer.setPWMDuty(0.5f, 9);
+   // setPWMDuty(0.5f, 9);
+   PWM_Timer.pwmOff();   // reset, clean state
+   // pwmOff();   // reset, clean state
 
    delay(250);
    // registers hold a value of max 65535
    // to write higher values, split them, in 2 16-bit registers.
    mb.setAdditionalServerData ("DM542T CONTROLLER"); //Report Server ID function (0x11) 
+   
+   // mb.addHreg(ADDR::_hreg_pwm_cs,            PWM::pwmCS);
+   // mb.addHreg(ADDR::_hreg_pwm_duty9, (int)   (PWM::pwmDuty9 * 100));
+   // mb.addHreg(ADDR::_hreg_pwm_duty10, (int)  (PWM::pwmDuty10 * 100));
+   // mb.addHreg(ADDR::_hreg_pwm_enabled,       PWM::pwmEnabled);
+   // mb.addHreg(ADDR::_hreg_pwm_freq,          PWM::pwmFreqReq);
+   // mb.addHreg(ADDR::_hreg_pwm_mode,          PWM::pwmMode);
+   // mb.addHreg(ADDR::_hreg_pwm_top,           PWM::pwmTop);
+   // mb.addHreg(ADDR::_hreg_pwm_lo_limit,      PWM::frq_default_lo_limit);
+   // mb.addHreg(ADDR::_hreg_pwm_hi_limit,      PWM::frq_default_hi_limit);
 
-   mb.addHreg(ADDR::_hreg_pwm_cs, PWM::pwmCS);
-   mb.addHreg(ADDR::_hreg_pwm_duty9, (int)(PWM::pwmDuty9 * 100));
-   mb.addHreg(ADDR::_hreg_pwm_duty10, (int)(PWM::pwmDuty10 * 100));
-   mb.addHreg(ADDR::_hreg_pwm_enabled, PWM::pwmEnabled);
-   mb.addHreg(ADDR::_hreg_pwm_freq, PWM::pwmFreqReq);
-   mb.addHreg(ADDR::_hreg_pwm_mode, PWM::pwmMode);
-   mb.addHreg(ADDR::_hreg_pwm_top, PWM::pwmTop);
-   mb.addHreg(ADDR::_hreg_pwm_lo_limit, PWM::frq_default_lo_limit);
-   mb.addHreg(ADDR::_hreg_pwm_hi_limit, PWM::frq_default_hi_limit);
+   mb.addHreg(ADDR::_hreg_pwm_cs,            PWM_Timer.getPwmCS());
+   mb.addHreg(ADDR::_hreg_pwm_duty9,  (uint16_t)  (PWM_Timer.getPwmDuty9() * 100));
+   mb.addHreg(ADDR::_hreg_pwm_duty10, (uint16_t)  (PWM_Timer.getPwmDuty10() * 100));
+   mb.addHreg(ADDR::_hreg_pwm_enabled,       PWM_Timer.pwmEnabled);
+   mb.addHreg(ADDR::_hreg_pwm_freq,          PWM_Timer.getPwmFrequencyRequested());
+   mb.addHreg(ADDR::_hreg_pwm_mode,          PWM_Timer.getPwmMode());
+   mb.addHreg(ADDR::_hreg_pwm_top,           PWM_Timer.getPwmTop());
+   mb.addHreg(ADDR::_hreg_pwm_lo_limit,      frq_default_lo_limit);
+   mb.addHreg(ADDR::_hreg_pwm_hi_limit,      frq_default_hi_limit);
 
+   mb.addHreg(ADDR::_hreg_set_pwm_duty9,  (uint16_t)  (PWM_Timer.getPwmDuty9() * 100));
+   mb.addHreg(ADDR::_hreg_set_pwm_duty10, (uint16_t)  (PWM_Timer.getPwmDuty10() * 100));
+   mb.addHreg(ADDR::_hreg_set_pwm_freq,      pwmFreqReq);
+   mb.addHreg(ADDR::_hreg_pwm_freq_actual,   PWM_Timer.getPwmFrequencyActual());
 
-   mb.addHreg(ADDR::_hreg_set_pwm_duty9,  (int)(PWM::pwmDuty9 * 100));
-   mb.addHreg(ADDR::_hreg_set_pwm_duty10, (int)(PWM::pwmDuty10 * 100));
-   mb.addHreg(ADDR::_hreg_set_pwm_freq, PWM::pwmFreqReq);
-   mb.addHreg(ADDR::_hreg_pwm_freq_actual, PWM::pwmFreqActual);
-
-   mb.addCoil(ADDR::_coil_pwm_configured, PWM::pwmConfigured);
+   mb.addCoil(ADDR::_coil_pwm_configured, PWM_Timer.pwmConfigured);
    mb.addCoil(ADDR::_coil_dir9, false);
    mb.addCoil(ADDR::_coil_pwm_start9, false);
    mb.addCoil(ADDR::_coil_dir10, false);
@@ -156,7 +174,7 @@ void setup() {
    update_params();  // update modbus data
 }
 
-#define pwmPin(condition, pin) (condition)? pwmOn(pin) : pwmOff(pin);
+#define pwmPin(condition, pin) (condition)? PWM_Timer.pwmOn(pin) : PWM_Timer.pwmOff(pin);
 
 void loop() {
    mb.task();
@@ -166,7 +184,7 @@ void loop() {
    pwmPin(mb.coil(ADDR::_coil_pwm_start10), 10);
 
    if (mb.Hreg(ADDR::_hreg_set_pwm_duty9) != mb.Hreg(ADDR::_hreg_pwm_duty9)){
-      setPWMDuty((mb.Hreg(ADDR::_hreg_set_pwm_duty9)/100.0f), 9);
+      PWM_Timer.setPWMDuty((mb.Hreg(ADDR::_hreg_set_pwm_duty9)/100.0f), 9);
       update_params();
    }
    if (mb.Hreg(ADDR::_hreg_set_pwm_freq) != mb.Hreg(ADDR::_hreg_pwm_freq)){
@@ -175,20 +193,22 @@ void loop() {
       const uint16_t lo_limit = mb.hreg(ADDR::_hreg_pwm_lo_limit);   
       const uint16_t hi_limit = mb.hreg(ADDR::_hreg_pwm_hi_limit);
       if (isValidFrequencyRange(lo_limit, hi_limit)){
-         if (PWM::pwmError == PWM::FRQ_HI_LO_INVALID) PWM::pwmError = PWM::NONE; // reset error once the range reset
+         if (PWM_Timer.getError() == FRQ_HI_LO_INVALID) PWM_Timer.resetError(); // reset error once the range reset
          // PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, lo_limit, hi_limit);
          rampPWMFrequency(freq_hz, lo_limit, hi_limit, 2000.0f);
       }
       else {
-         PWM::pwmError = PWM::FRQ_HI_LO_INVALID;   
+         // PWM::pwmError = PWM::FRQ_HI_LO_INVALID;   
          // PWM::pwmFreqActual = changePWMFrequency((float)freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit);
-         rampPWMFrequency(freq_hz, PWM::frq_default_lo_limit, PWM::frq_default_hi_limit, 2000.0f);  
+         rampPWMFrequency(freq_hz, frq_default_lo_limit, frq_default_hi_limit, 2000.0f);  
       }
       update_params();
    }
 }
-
-
+bool isValidFrequencyRange(const uint16_t &lo_limit, const uint16_t &hi_limit){
+   return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit);
+}
+/*
 #pragma region Functions
 // ================ Basic Control ================
 
@@ -220,9 +240,7 @@ static bool isPwmMode(PWM::PWM_MODE mode) {
 
 // Set frequency in Hz (shared by pins 9 and 10). Returns the actual frequency, or 0. 
 //TODO:: Add a way to also select which timer. (Maybe wrap this up in a lib, add pointers to OCRA/OCRB registers and use that)
-bool isValidFrequencyRange(const uint16_t &lo_limit, const uint16_t &hi_limit){
-   return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit);
-}
+
 
 float setPWMFrequency(float freqHz,float lo_limit, float hi_limit) { 
    // Constraing the frequency to the set limit. If the modbus server limits are invalid, usen the default value
@@ -414,27 +432,29 @@ ISR(TIMER1_OVF_vect) {
 // Moves the output toward targetHz at accelHzPerS (Hz/s = steps/s^2).
 // Returns true while ramping, false when on target (or the timer isn't set up).
 // Mostly should work as a linear ramp.
+*/
 bool rampPWMFrequency(float targetHz, float lo_limit, float hi_limit, float accelHzPerS) {
-   if (PWM::pwmFreqReq == constrain(targetHz, lo_limit, hi_limit)) return false;
+   auto pwmFreqReq = PWM_Timer.getPwmFrequencyRequested();
+   if (pwmFreqReq == constrain(targetHz, lo_limit, hi_limit)) return false;
    if (!(accelHzPerS > 0.0f)) return false;
 
    static uint32_t lastMs = millis();
    const uint32_t now    = millis();
    const uint32_t passed = min(now - lastMs, 10UL);
-   if (passed == 0) return PWM::pwmFreqReq != targetHz;
+   if (passed == 0) return pwmFreqReq != targetHz;
    lastMs = now;
 
    const float df   = accelHzPerS * passed * 0.001f;
-   const float next = (targetHz > PWM::pwmFreqReq) ? min(PWM::pwmFreqReq + df, targetHz)
-                                                   : max(PWM::pwmFreqReq - df, targetHz);
-   const float actual = changePWMFrequency(next, lo_limit, hi_limit);
+   const float next = (targetHz > pwmFreqReq) ? min(pwmFreqReq + df, targetHz) :
+                                                max(pwmFreqReq - df, targetHz);
+   const float actual = PWM_Timer.changePWMFrequency(next, lo_limit, hi_limit);
    if (actual == 0.0f) return false;
-   PWM::pwmFreqActual = actual;
+   
    return next != targetHz;
 }
 
 // ================ /PWM Control/ ================
-
+/*
 // ================ Helper Functions ================
 // Selects / calculcates the output compare registers values based on PWM mode.
 static uint16_t dutyToOCR(float duty, uint16_t top, PWM::PWM_MODE m) {
@@ -498,14 +518,16 @@ uint8_t getControlWord(uint16_t PIN_NO){
    return control;
 }
 // ================ /Helper Functions/ ================
-
+*/
 
 // ================ Modbus Communication ================
 void update_params(){   // update modbus data
-   mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
-   mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
-   mb.setHreg(ADDR::_hreg_pwm_freq,     PWM::pwmFreqReq);
-   mb.setHreg(ADDR::_hreg_pwm_freq_actual, PWM::pwmFreqActual);
+   // mb.setHreg(ADDR::_hreg_pwm_duty9,   (PWM::pwmDuty9 * 100));
+   // mb.setHreg(ADDR::_hreg_pwm_duty10,  (PWM::pwmDuty10 * 100));
+   mb.setHreg(ADDR::_hreg_pwm_duty9,       (uint16_t)(PWM_Timer.getPwmDuty9() * 100));
+   mb.setHreg(ADDR::_hreg_pwm_duty10,      (uint16_t)(PWM_Timer.getPwmDuty10() * 100));
+   mb.setHreg(ADDR::_hreg_pwm_freq,        PWM_Timer.getPwmFrequencyRequested());
+   mb.setHreg(ADDR::_hreg_pwm_freq_actual, PWM_Timer.getPwmFrequencyActual());
 }
 // ================ /Modbus Communication/ ================
 #pragma endregion

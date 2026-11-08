@@ -60,6 +60,7 @@ flowchart LR
 * `mb.task()` blocks for ~3–4 ms per Modbus request.
 * Frequency registers are 16-bit, so values above 65 535 Hz can't be written in one register.
 * Pin D10 has a PWM channel but no DIR pin yet.
+* Modbus performance is affected by the ModbusSerial Library, which is using delay() to send messages in both the send() and sendPDU() functions. The current implementation plan for the whole controller implies havily that the delay function is not used in the loop. 
 
 ---
 
@@ -103,6 +104,8 @@ flowchart LR
 * Fixed: duty stored unclamped when set above 100%
 * Fixed: requested frequency not recorded when the new TOP equals the old one
 * Fixed: duty not recorded before the timer is configured
+
+### V0.6 Porting The PWM Funcitons to separate library
 
 ## Target Requirements
 | ID | Category | Requirement | Status |
