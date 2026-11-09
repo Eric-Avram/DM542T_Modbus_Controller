@@ -16,7 +16,8 @@ setPWMMode	KEYWORD2
 setPWMFrequency	KEYWORD2
 changePWMFrequency	KEYWORD2
 setPWMDuty	KEYWORD2
-getPwmError	KEYWORD2
+getError	KEYWORD2
+resetError	KEYWORD2
 getPwmMode	KEYWORD2
 getPwmFrequencyActual	KEYWORD2
 getPwmFrequencyRequested	KEYWORD2

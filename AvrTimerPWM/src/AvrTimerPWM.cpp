@@ -131,7 +131,7 @@ float AvrTimerPWM::changePWMFrequency(float freq_hz, float lo_limit, float hi_li
    const uint16_t b = dutyToOCR(pwmDuty10, top, pwmMode);
 
    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {        
-      if (top > pwmTop){            
+      if (top > ICR1){            
          // If the new top is higher, new value can be written directly, because the current one will still generate a pulse
          // The new value for the OCR will just be saved in the buffer until the next bottom, when it updates
          // Downside is that this method delays the changes by 1 period from the command, but keeps accurate steps 

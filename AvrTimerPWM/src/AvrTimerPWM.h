@@ -1,6 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include <util/atomic.h>   
+#if !defined(__AVR_ATmega328P__)
+#error "AvrTimerPWM currently supports the ATmega328P only"
+#endif
+
 /**
  * @enum TIMER
  * @brief AVR timers selection
