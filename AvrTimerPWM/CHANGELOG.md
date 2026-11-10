@@ -8,10 +8,13 @@ First version, ported from the PWM generation code of the DM542T Modbus Controll
 * Waveform modes: Normal, CTC, Fast PWM, Phase Correct, Phase and Frequency Correct
 * `setPWMFrequency()` to configure the timer, with automatic prescaler selection
 * `changePWMFrequency()` to change the frequency while the timer is running, without restarting it
+* `rampPWMFrequency()` to move the frequency toward a target at a constant acceleration
 * `setPWMDuty()` for each pin or both pins
 * `pwmOn()` / `pwmOff()` to connect and disconnect each pin
 * Frequency limits, with defaults of 125 Hz to 20 kHz
-* Getters for the current mode, frequency, duty, TOP and clock select values
+* Error reporting with `getError()` / `resetError()` for rejected requests
+* Warning reporting with `getWarning()` / `resetWarning()` for requests that were applied but adjusted
+* Getters for the current mode, frequency, duty, TOP, clock select values and connected pins
 
 ### Known limitations
 * Timer1 on the ATmega328P only; `attach()` is not implemented yet

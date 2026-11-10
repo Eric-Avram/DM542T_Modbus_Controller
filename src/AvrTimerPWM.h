@@ -36,11 +36,22 @@ enum class PWM_ERROR {
     PWM_MODE_INCORRECT,
     PWM_UNCONFIGURED,
     FRQ_TOO_LOW,
+    FRQ_OUT_OF_BOUNDS,
     PRESCALER_OUT_OF_BOUNDS,
+    FRQ_HI_LO_INVALID,
+    ACCEL_INVALID,
+    PIN_INVALID
+};
+/**
+ * @enum PWM_WARNING
+ * @brief The request was applied, but had to be adjusted
+ */
+enum class PWM_WARNING {
+    NONE = 0,
     FRQ_CONSTRAINTED_LO,
     FRQ_CONSTRAINTED_HI,
-    FRQ_OUT_OF_BOUNDS,
-    FRQ_HI_LO_INVALID
+    FRQ_HI_LO_INVALID,
+    DUTY_CONSTRAINED
 };
 
 constexpr uint16_t PWM_PRESCALERS[] = { 1, 8, 64, 256, 1024 }; // add up to 8 when implementing timer 2
@@ -72,9 +83,11 @@ constexpr uint16_t frq_default_hi_limit = 20000;
         bool  rampPWMFrequency  (float targetHz, float accelHzPerS = 500.0f, float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
         void  setPWMDuty        (float duty, uint8_t pin = 0        );
         
-        void resetError()       { pwmError = PWM_ERROR::NONE; }
-        PWM_ERROR getError()    { return pwmError; }
-        PWM_MODE  getPwmMode()  { return pwmMode;  }
+        void resetError()           { pwmError = PWM_ERROR::NONE; }
+        void resetWarning()         { pwmWarning = PWM_WARNING::NONE; }
+        PWM_ERROR   getError()      { return pwmError; }
+        PWM_WARNING getWarning()    { return pwmWarning; }
+        PWM_MODE    getPwmMode()    { return pwmMode;  }
 
         float     getPwmFrequencyActual()    { return pwmFreqActual; }
         float     getPwmFrequencyRequested() { return pwmFreqReq;    }
@@ -87,12 +100,13 @@ constexpr uint16_t frq_default_hi_limit = 20000;
         uint8_t   getPwmStatus()    { return pwmEnabled;    }                                   // bit0 = pin 9 connected, bit1 = pin 10 connected
         // bool      isPwmEnabled(uint8_t pin) { return (pwmEnabled & getControlWord(pin)) != 0; } // Check if PWM is enabled for a specific pin
         bool      isPwmConfigured() { return pwmConfigured; }
-        bool      isValidFrequencyRange (const uint16_t &lo_limit, const uint16_t &hi_limit) { return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit); }
+        // bool      isValidFrequencyRange (const uint16_t &lo_limit, const uint16_t &hi_limit) { return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit); }
         bool      isValidFrequencyRange (const float &lo_limit, const float &hi_limit)       { return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit); }
 
 
     private:
         PWM_ERROR  pwmError;
+        PWM_WARNING pwmWarning;
         PWM_MODE   pwmMode;
         float      pwmFreqReq;       // last successfully applied frequency request
         float      pwmFreqActual;    // last successfully applied frequency actual
@@ -106,5 +120,6 @@ constexpr uint16_t frq_default_hi_limit = 20000;
 
         uint8_t comBits();
         void updatePins();
+        void raiseError(PWM_ERROR e) { if (pwmError == PWM_ERROR::NONE) pwmError = e; }  // keeps the first error until resetError()
         uint32_t rampLastMs;
  };
