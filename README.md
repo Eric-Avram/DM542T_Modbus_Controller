@@ -106,6 +106,15 @@ flowchart LR
 * Fixed: duty not recorded before the timer is configured
 
 ### V0.6 Porting The PWM Funcitons to separate library
+* Moved all the PWM functions from the sketch to the `AvrTimerPWM` library, using the Arduino library folder structure
+* Added the library README, CHANGELOG, LICENSE, `keywords.txt` and `library.properties`
+* Moved the linear ramp from the sketch to the library as `rampPWMFrequency()`
+* Changed the global enums to enum classes to avoid name conflicts
+* Added error and warning reporting
+* Added Doxygen documentation in the header and organised the code into regions
+* Fixed: ramp could get inverted at low frequencies; the new TOP is now compared with ICR1 instead of the previous TOP
+* Fixed: last ramp time was stored in a static variable shared by all objects; it is now a private member of the class
+* The current library only works for Timer 1, but I am planning to add the code for Timer 0 and 2 in the near future.
 
 ## Target Requirements
 | ID | Category | Requirement | Status |
