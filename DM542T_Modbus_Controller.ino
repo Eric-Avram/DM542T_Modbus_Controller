@@ -20,21 +20,25 @@
 namespace ADDR {
 
    //** Low -level control 0x00 - 0x09
+   // Prer for Timer 2
+   // constexpr uint8_t _hreg_set_pwm_duty3 = 0x04;
+   // constexpr uint8_t _hreg_set_pwm_duty11 = 0x04;
+
    constexpr uint8_t _hreg_set_pwm_duty9 = 0x04;
    constexpr uint8_t _hreg_set_pwm_duty10 = 0x05;
    constexpr uint8_t _hreg_set_pwm_freq = 0x06;
 
    //** PWM Settings 0x0A - 0x14 (10-20)
-   constexpr uint8_t _hreg_pwm_enabled = 0x0A;
-   constexpr uint8_t _hreg_pwm_mode = 0x0B;
-   constexpr uint8_t _hreg_pwm_top = 0x0C;
-   constexpr uint8_t _hreg_pwm_cs = 0x0D;
-   constexpr uint8_t _hreg_pwm_duty9 = 0x0E;   // R
-   constexpr uint8_t _hreg_pwm_duty10 = 0x0F;  // R
-   constexpr uint8_t _hreg_pwm_freq = 0x10;    // R
-   constexpr uint8_t _hreg_pwm_freq_actual = 0x11;
-   constexpr uint8_t _hreg_pwm_lo_limit = 0x12;
-   constexpr uint8_t _hreg_pwm_hi_limit = 0x13;
+   constexpr uint8_t _hreg_pwm_enabled = 0x0A;  // readonly
+   constexpr uint8_t _hreg_pwm_mode = 0x0B;     
+   constexpr uint8_t _hreg_pwm_top = 0x0C;      // readonly
+   constexpr uint8_t _hreg_pwm_cs = 0x0D;       // readonly
+   constexpr uint8_t _hreg_pwm_duty9 = 0x0E;   // Readonly
+   constexpr uint8_t _hreg_pwm_duty10 = 0x0F;  // Readonly
+   constexpr uint8_t _hreg_pwm_freq = 0x10;    // Readonly
+   constexpr uint8_t _hreg_pwm_freq_actual = 0x11; //Readonly
+   constexpr uint8_t _hreg_pwm_lo_limit = 0x12; //R/W
+   constexpr uint8_t _hreg_pwm_hi_limit = 0x13; //R/W
 
    constexpr uint8_t _coil_pwm_configured = 0x00;
    constexpr uint8_t _coil_dir9 = 0x01;
@@ -42,10 +46,8 @@ namespace ADDR {
    constexpr uint8_t _coil_dir10 = 0x03;
    constexpr uint8_t _coil_pwm_start10 = 0x04;
 
-   //** Stepper Driver Settings 0x1E - 0x28 (30-40)
-   constexpr uint8_t _hreg_stepper_power = 0x1E;
-   constexpr uint8_t _hreg_stepper_resolution = 0x1F;
-   constexpr uint8_t _err_freq_change = 0x64;
+   constexpr uint8_t _ireg_pwm_enabled = 0x00;
+   
 }
 
 #pragma region Objects & Handlers
