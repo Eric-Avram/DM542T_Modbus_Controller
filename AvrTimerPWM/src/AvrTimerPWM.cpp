@@ -1,7 +1,4 @@
 #include "AvrTimerPWM.h"
-// #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
-#define isValidFrequencyRange (lo_limit, hi_limit)  ((lo_limit > 0) && (hi_limit > 0) && (lo_limit < hi_limit))
-
 static uint16_t dutyToOCR (float duty, uint16_t top, PWM_MODE m);
 static uint8_t  getControlWord (uint16_t PIN_NO);
 static bool isPwmMode (PWM_MODE mode);
@@ -10,10 +7,22 @@ static volatile uint16_t pwmPendingTop;      // 0 = no frequency change waiting
 
 #pragma region Constructors
 AvrTimerPWM::AvrTimerPWM(float frequency, float dutyCycle)
-    : pwmError(PWM_ERROR::NONE), pwmMode(PWM_MODE::PH_CORRECT), pwmFreqReq(frequency), 
-      pwmFreqActual(0.0f), pwmDuty9(dutyCycle), pwmDuty10(dutyCycle), pwmTop(0), pwmCS(0), 
-      pwmEnabled(0), pwmConfigured(false)
-{}
+    : pwmError(PWM_ERROR::NONE), pwmMode(PWM_MODE::PH_CORRECT), pwmFreqReq(frequency),
+      pwmFreqActual(0.0f), pwmDuty9(constrain(dutyCycle, 0.0f, 1.0f)),
+      pwmDuty10(constrain(dutyCycle, 0.0f, 1.0f)), pwmTop(0), pwmCS(0),
+      pwmEnabled(0), pwmConfigured(false), rampLastMs(0) 
+      {}
+
+/**
+ * @brief Default constructor for AvrTimerPWM class
+ * Initializes the PWM with default frequency (2000Hz) and duty cycle (50%) 
+ * You need to call setPWMFrequency() and setPWMDuty() to change the frequency and duty cycle after construction in the setup()
+ * If you want to use the default frequency and duty cycle, you can call setPWMFrequency() and setPWMDuty() with the default values.
+ * Or you can call setTimer() to set the frequency and duty cycle at the same time.
+ */
+AvrTimerPWM::AvrTimerPWM() : AvrTimerPWM(2000.0f, 0.5f) {}
+
+
 #pragma endregion
 
 #pragma region Control
@@ -39,7 +48,7 @@ float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
    uint16_t top = 0;
    float actual;
 
-   if (mode == NORMAL) {
+   if (mode == PWM_MODE::NORMAL) {
       // Free-running 16-bit counter: only the prescaler sets the rate (overflow frequency).
       float bestErr = 1e30f;              // get some really smol value
       for (uint8_t i = 0; i < 5; i++) {   // find the prescaler with the best error margin 
@@ -53,8 +62,8 @@ float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
       actual = (float)F_CPU / (65536.0f * PWM_PRESCALERS[idx]);
    } else {  
       // f = F_CPU / (k * N * (TOP + off))
-      const float k      = (mode == FAST_PWM) ? 1.0f : 2.0f;
-      const float offset = (mode == PH_CORRECT || mode == FAST_PWM_PH_CORRECT) ? 0.0f : 1.0f;
+      const float k      = (mode == PWM_MODE::FAST_PWM) ? 1.0f : 2.0f;
+      const float offset = (mode == PWM_MODE::PH_CORRECT || mode == PWM_MODE::FAST_PWM_PH_CORRECT) ? 0.0f : 1.0f;
       float t = 0.0f;
       for (; idx < 5; idx++) {               // find the highest prescaler that yields a valid value
          t = (float)F_CPU / (k * PWM_PRESCALERS[idx] * freq) - offset;
@@ -67,7 +76,7 @@ float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
    const uint8_t cs = idx + 1;
 
    // Nothing changed -> don't restart the timer
-   if (pwmConfigured && mode == pwmMode && top == pwmTop && cs == pwmCS){
+   if (isPwmConfigured() && mode == pwmMode && top == pwmTop && cs == pwmCS){
       pwmFreqReq = freq;
       pwmFreqActual = actual;
       return actual;
@@ -110,7 +119,7 @@ float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
 
 float AvrTimerPWM::changePWMFrequency(float freq_hz, float lo_limit, float hi_limit){
    if (freq_hz <= 0.0f) return 0.0f;
-   if ((!pwmConfigured) || (pwmMode != FAST_PWM_PH_CORRECT)) return 0.0f;
+   if ((!isPwmConfigured()) || (pwmMode != PWM_MODE::FAST_PWM_PH_CORRECT)) return 0.0f;
    if (lo_limit > hi_limit) return 0.0f;
    freq_hz = constrain(freq_hz, lo_limit, hi_limit);
 
@@ -184,7 +193,7 @@ void AvrTimerPWM::setPWMDuty(float duty, uint8_t pin) {
    duty = constrain(duty, 0.0f, 1.0f);
    if (pin== 0 || pin == 9)  pwmDuty9 = duty;
    if (pin== 0 || pin == 10) pwmDuty10 = duty;
-   if (!pwmConfigured || !isPwmMode(pwmMode)) return;
+   if (!isPwmConfigured() || !isPwmMode(pwmMode)) return;
 
    const uint16_t OCR = dutyToOCR(duty, pwmTop, pwmMode);
 
@@ -215,9 +224,44 @@ float AvrTimerPWM::setPWMFrequency(float freqHz,float lo_limit, float hi_limit) 
    // More permissive than, changeFrequency() because it resets the timer
    if (lo_limit < hi_limit){   // valid limit values, if not just default 
       return setTimer(pwmMode, constrain(freqHz, (lo_limit >= 0) ? lo_limit : frq_default_lo_limit, 
-                                                      (hi_limit > 0) ? hi_limit : frq_default_hi_limit));
+                                                 (hi_limit > 0) ? hi_limit : frq_default_hi_limit));
    }
    else return setTimer(pwmMode, constrain(freqHz, frq_default_lo_limit, frq_default_hi_limit));
+}
+
+/**
+ * @brief Call every loop() with the frequency setpoint.
+ * @brief Moves the output toward targetHz at accelHzPerS (Hz/s = steps/s^2).
+ * @brief Mostly should work as a linear ramp.
+ * @param targetHz The target frequency in Hz
+ * @param accelHzPerS The acceleration in Hz/s
+ * @param lo_limit The lower frequency limit
+ * @param hi_limit The upper frequency limit
+ * @return Returns true while ramping, false when on target (or the timer isn't set up).
+ */
+bool AvrTimerPWM::rampPWMFrequency(float targetHz, float accelHzPerS, float lo_limit, float hi_limit) {
+   if (!isValidFrequencyRange(lo_limit, hi_limit)){
+      lo_limit = frq_default_lo_limit;
+      hi_limit = frq_default_hi_limit;
+      pwmError = PWM_ERROR::FRQ_HI_LO_INVALID;
+   } else if (pwmError == PWM_ERROR::FRQ_HI_LO_INVALID) resetError();
+
+   if (pwmFreqReq == constrain(targetHz, lo_limit, hi_limit)) return false;
+   if (accelHzPerS <= 0.0f) return false;
+
+   // static uint32_t lastMs = millis();
+   const  uint32_t now    = millis();
+   const  uint32_t passed = min(now - rampLastMs, 10UL);
+   if (passed == 0) return pwmFreqReq != targetHz;
+
+   const float df   = accelHzPerS * passed * 0.001f;
+   const float next = (targetHz > pwmFreqReq) ? min(pwmFreqReq + df, targetHz) :
+                                                max(pwmFreqReq - df, targetHz);
+   const float actual = changePWMFrequency(next, lo_limit, hi_limit);
+   rampLastMs = now;
+
+   if (actual == 0.0f) return false;
+   return next != targetHz;
 }
 
 uint8_t AvrTimerPWM::comBits() {
@@ -239,17 +283,17 @@ void AvrTimerPWM::updatePins() {
 /********************* HELPER FUNCTIONS **********************/
 
 static bool isPwmMode(PWM_MODE mode) {
-  return mode == PH_CORRECT || 
-         mode == FAST_PWM   || 
-         mode == FAST_PWM_PH_CORRECT;
+  return mode == PWM_MODE::PH_CORRECT || 
+         mode == PWM_MODE::FAST_PWM   || 
+         mode == PWM_MODE::FAST_PWM_PH_CORRECT;
 }
 
 static uint16_t dutyToOCR(float duty, uint16_t top, PWM_MODE m) {
   switch (m) {
-    case PH_CORRECT:
-    case FAST_PWM_PH_CORRECT:
+    case PWM_MODE::PH_CORRECT:
+    case PWM_MODE::FAST_PWM_PH_CORRECT:
       return (uint16_t)lroundf(duty * top);  // 0..TOP
-    case FAST_PWM:
+    case PWM_MODE::FAST_PWM:
       {
         uint32_t v = (uint32_t)lroundf(duty * ((float)top + 1.0f));  // period is TOP+1 clocks
         return (v > top) ? top : (uint16_t)v;                        // OCR = TOP -> constant high
@@ -272,19 +316,19 @@ static uint8_t getControlWord(uint16_t PIN_NO){
 
 static void wgmBits(PWM_MODE m, uint8_t &a, uint8_t &b) {
   switch (m) {
-    case FAST_PWM_PH_CORRECT:
+    case PWM_MODE::FAST_PWM_PH_CORRECT:
       a = 0;
       b = _BV(WGM13);
       break;  // mode 8
-    case PH_CORRECT:
+    case PWM_MODE::PH_CORRECT:
       a = _BV(WGM11);
       b = _BV(WGM13);
       break;  // mode 10
-    case CTC:
+    case PWM_MODE::CTC:
       a = 0;
       b = _BV(WGM13) | _BV(WGM12);
       break;  // mode 12
-    case FAST_PWM:
+    case PWM_MODE::FAST_PWM:
       a = _BV(WGM11);
       b = _BV(WGM13) | _BV(WGM12);
       break;  // mode 14

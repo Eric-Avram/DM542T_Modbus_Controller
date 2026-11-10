@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <util/atomic.h>   
+
 #if !defined(__AVR_ATmega328P__)
 #error "AvrTimerPWM currently supports the ATmega328P only"
 #endif
@@ -9,7 +10,7 @@
  * @enum TIMER
  * @brief AVR timers selection
  */
-enum TIMER {
+enum class TIMER {
     TIMER_0 = 0,
     TIMER_1 = 1,
     TIMER_2 = 2
@@ -19,7 +20,7 @@ enum TIMER {
  * @brief PWM modes for AVR timers, see datasheet 
  * for details at https://avr-guide.github.io/timers-on-the-atmega328/
  */
-enum PWM_MODE {
+enum class PWM_MODE:uint8_t {
     NORMAL,
     PH_CORRECT,
     CTC,
@@ -30,7 +31,7 @@ enum PWM_MODE {
  * @enum PWM_ERROR
  * @brief Error codes for PWM configuration
  */
-enum PWM_ERROR {
+enum class PWM_ERROR {
     NONE = 0,
     PWM_MODE_INCORRECT,
     PWM_UNCONFIGURED,
@@ -59,7 +60,7 @@ constexpr uint16_t frq_default_hi_limit = 20000;
          * @param dutyCycle The desired duty cycle as a percentage (0.0-1.0)
          */
         AvrTimerPWM(float frequency, float dutyCycle);
-        // AvrTimerPWM(const float& frequency, const float& dutyCycle);
+        AvrTimerPWM();  // Default constructor with default frequency(2000Hz) and duty cycle(50%)
 
         void attach(TIMER timer);
         void pwmOn (uint16_t PIN_NO = 0);
@@ -68,6 +69,7 @@ constexpr uint16_t frq_default_hi_limit = 20000;
         float setPWMMode        (PWM_MODE m);
         float setPWMFrequency   (float freqHz,  float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
         float changePWMFrequency(float freq_hz, float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
+        bool  rampPWMFrequency  (float targetHz, float accelHzPerS = 500.0f, float lo_limit = frq_default_lo_limit, float hi_limit = frq_default_hi_limit);
         void  setPWMDuty        (float duty, uint8_t pin = 0        );
         
         void resetError()       { pwmError = PWM_ERROR::NONE; }
@@ -82,8 +84,13 @@ constexpr uint16_t frq_default_hi_limit = 20000;
         uint16_t  getPwmTop()    { return pwmTop;    }
         uint8_t   getPwmCS()     { return pwmCS;     }  
 
-        uint8_t   pwmEnabled;       // bit0 = pin 9 connected, bit1 = pin 10 connected
-        bool      pwmConfigured;
+        uint8_t   getPwmStatus()    { return pwmEnabled;    }                                   // bit0 = pin 9 connected, bit1 = pin 10 connected
+        // bool      isPwmEnabled(uint8_t pin) { return (pwmEnabled & getControlWord(pin)) != 0; } // Check if PWM is enabled for a specific pin
+        bool      isPwmConfigured() { return pwmConfigured; }
+        // bool      isValidFrequencyRange (const uint16_t &lo_limit, const uint16_t &hi_limit) { return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit); }
+        bool      isValidFrequencyRange (const float &lo_limit, const float &hi_limit)       { return (lo_limit > 0 && hi_limit > 0 && lo_limit < hi_limit); }
+
+
     private:
         PWM_ERROR  pwmError;
         PWM_MODE   pwmMode;
@@ -94,6 +101,10 @@ constexpr uint16_t frq_default_hi_limit = 20000;
         uint16_t   pwmTop;
         uint8_t    pwmCS;
 
+        uint8_t   pwmEnabled;       // bit0 = pin 9 connected, bit1 = pin 10 connected
+        bool      pwmConfigured;
+
         uint8_t comBits();
         void updatePins();
+        uint32_t rampLastMs;
  };
