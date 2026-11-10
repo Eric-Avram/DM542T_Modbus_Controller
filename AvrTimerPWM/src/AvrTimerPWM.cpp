@@ -13,13 +13,6 @@ AvrTimerPWM::AvrTimerPWM(float frequency, float dutyCycle)
       pwmEnabled(0), pwmConfigured(false), rampLastMs(0) 
       {}
 
-/**
- * @brief Default constructor for AvrTimerPWM class
- * Initializes the PWM with default frequency (2000Hz) and duty cycle (50%) 
- * You need to call setPWMFrequency() and setPWMDuty() to change the frequency and duty cycle after construction in the setup()
- * If you want to use the default frequency and duty cycle, you can call setPWMFrequency() and setPWMDuty() with the default values.
- * Or you can call setTimer() to set the frequency and duty cycle at the same time.
- */
 AvrTimerPWM::AvrTimerPWM() : AvrTimerPWM(2000.0f, 0.5f) {}
 
 
@@ -161,7 +154,7 @@ float AvrTimerPWM::setPWMFrequency(float freqHz,float lo_limit, float hi_limit) 
    // More permissive than, changeFrequency() because it resets the timer
    float lo = frq_default_lo_limit;
    float hi = frq_default_hi_limit;
-   if (lo_limit < hi_limit && lo_limit >= 0 && hi_limit > 0){   // valid limit values, if not just default 
+   if (lo_limit < hi_limit && lo_limit >= 0 && hi_limit > 0){   // valid limits 
       lo = lo_limit;
       hi = hi_limit;
    }
@@ -274,16 +267,6 @@ float AvrTimerPWM::changePWMFrequency(float freq_hz, float lo_limit, float hi_li
    return actual;
 }
 
-/**
- * @brief Call every loop() with the frequency setpoint.
- * @brief Moves the output toward targetHz at accelHzPerS (Hz/s = steps/s^2).
- * @brief Mostly should work as a linear ramp.
- * @param targetHz The target frequency in Hz
- * @param accelHzPerS The acceleration in Hz/s
- * @param lo_limit The lower frequency limit
- * @param hi_limit The upper frequency limit
- * @return Returns true while ramping, false when on target (or the timer isn't set up).
- */
 bool AvrTimerPWM::rampPWMFrequency(float targetHz, float accelHzPerS, float lo_limit, float hi_limit) {
    if (!isValidFrequencyRange(lo_limit, hi_limit)){
       lo_limit = frq_default_lo_limit;
@@ -343,7 +326,6 @@ void AvrTimerPWM::updatePins() {
 #pragma endregion
 
 #pragma region Static Helper Functions
-/********************* HELPER FUNCTIONS **********************/
 
 static bool isPwmMode(PWM_MODE mode) {
   return mode == PWM_MODE::PH_CORRECT || 

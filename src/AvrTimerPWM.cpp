@@ -13,48 +13,12 @@ AvrTimerPWM::AvrTimerPWM(float frequency, float dutyCycle)
       pwmEnabled(0), pwmConfigured(false), rampLastMs(0) 
       {}
 
-/**
- * @brief Default constructor for AvrTimerPWM class
- * Initializes the PWM with default frequency (2000Hz) and duty cycle (50%) 
- * You need to call setPWMFrequency() and setPWMDuty() to change the frequency and duty cycle after construction in the setup()
- * If you want to use the default frequency and duty cycle, you can call setPWMFrequency() and setPWMDuty() with the default values.
- * Or you can call setTimer() to set the frequency and duty cycle at the same time.
- */
 AvrTimerPWM::AvrTimerPWM() : AvrTimerPWM(2000.0f, 0.5f) {}
 
 
 #pragma endregion
 
-#pragma region Control
-void AvrTimerPWM::pwmOff(uint16_t PIN_NO){   
-   const uint8_t control = getControlWord(PIN_NO);
-   if (control == 0) {
-      raiseError(PWM_ERROR::PIN_INVALID);
-      return;
-   }
-   pwmEnabled &= ~control;
-   updatePins();
-}
-
-void AvrTimerPWM::pwmOn(uint16_t PIN_NO){
-   if (!isPwmConfigured()) {
-      raiseError(PWM_ERROR::PWM_UNCONFIGURED);
-      return;
-   }
-   const uint8_t control = getControlWord(PIN_NO);
-   if (control == 0) {
-      raiseError(PWM_ERROR::PIN_INVALID);
-      return;
-   }
-   pwmEnabled |= control;
-   updatePins();
-}
-
-void AvrTimerPWM::attach(TIMER timer) {
-    // Implementation for attaching the timer
-    return;
-}
-#pragma endregion
+#pragma region Settters
 
 float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
    if (freq <= 0.0f)  {
@@ -141,6 +105,98 @@ float AvrTimerPWM::setTimer(PWM_MODE mode, float freq) {
    return actual;
 }
 
+float AvrTimerPWM::setPWMMode(PWM_MODE m) {
+  if (pwmFreqReq <= 0.0f) { // frq not set, just remember the pwm mode
+    pwmMode = m;
+    return 0.0f;
+  }  
+  return setTimer(m,pwmFreqReq);
+}
+
+void AvrTimerPWM::setPWMDuty(float duty, uint8_t pin) {
+   if (!(pin == 9) && !(pin == 10) && !(pin == 0)) {
+      raiseError(PWM_ERROR::PIN_INVALID);
+      return;
+   }
+
+   if (duty < 0.0f || duty > 1.0f) pwmWarning = PWM_WARNING::DUTY_CONSTRAINED;
+   duty = constrain(duty, 0.0f, 1.0f);
+   if (pin== 0 || pin == 9)  pwmDuty9 = duty;
+   if (pin== 0 || pin == 10) pwmDuty10 = duty;
+   if (!isPwmConfigured() || !isPwmMode(pwmMode)) return;
+
+   const uint16_t OCR = dutyToOCR(duty, pwmTop, pwmMode);
+
+   switch (pin){
+      case 9:
+         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1A = OCR;
+         }
+         break;
+      case 10:
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1B = OCR;
+         }
+         break;
+      case 0:
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            OCR1A = OCR;
+            OCR1B = OCR;
+         }
+         break;
+      default:
+         return;
+   }
+}
+
+float AvrTimerPWM::setPWMFrequency(float freqHz,float lo_limit, float hi_limit) { 
+   // Constraing the frequency to the set limit. If the limits are invalid, usen the default value
+   // More permissive than, changeFrequency() because it resets the timer
+   float lo = frq_default_lo_limit;
+   float hi = frq_default_hi_limit;
+   if (lo_limit < hi_limit && lo_limit >= 0 && hi_limit > 0){   // valid limits 
+      lo = lo_limit;
+      hi = hi_limit;
+   }
+   else pwmWarning = PWM_WARNING::FRQ_HI_LO_INVALID;
+
+   if (freqHz < lo)      pwmWarning = PWM_WARNING::FRQ_CONSTRAINTED_LO;
+   else if (freqHz > hi) pwmWarning = PWM_WARNING::FRQ_CONSTRAINTED_HI;
+   return setTimer(pwmMode, constrain(freqHz, lo, hi));
+}
+
+#pragma region Control
+void AvrTimerPWM::pwmOff(uint16_t PIN_NO){   
+   const uint8_t control = getControlWord(PIN_NO);
+   if (control == 0) {
+      raiseError(PWM_ERROR::PIN_INVALID);
+      return;
+   }
+   pwmEnabled &= ~control;
+   updatePins();
+}
+
+void AvrTimerPWM::pwmOn(uint16_t PIN_NO){
+   if (!isPwmConfigured()) {
+      raiseError(PWM_ERROR::PWM_UNCONFIGURED);
+      return;
+   }
+   const uint8_t control = getControlWord(PIN_NO);
+   if (control == 0) {
+      raiseError(PWM_ERROR::PIN_INVALID);
+      return;
+   }
+   pwmEnabled |= control;
+   updatePins();
+}
+
+void AvrTimerPWM::attach(TIMER timer) {
+    // Implementation for attaching the timer
+    return;
+}
+#pragma endregion
+
+#pragma region Frequency Control
 float AvrTimerPWM::changePWMFrequency(float freq_hz, float lo_limit, float hi_limit){
    if (freq_hz <= 0.0f) {
       raiseError(PWM_ERROR::FRQ_TOO_LOW);
@@ -211,86 +267,6 @@ float AvrTimerPWM::changePWMFrequency(float freq_hz, float lo_limit, float hi_li
    return actual;
 }
 
-float AvrTimerPWM::setPWMMode(PWM_MODE m) {
-  if (pwmFreqReq <= 0.0f) { // frq not set, just remember the pwm mode
-    pwmMode = m;
-    return 0.0f;
-  }  
-  return setTimer(m,pwmFreqReq);
-}
-
-ISR(TIMER1_OVF_vect) {
-  const uint16_t top = pwmPendingTop;
-  if (top && (uint16_t)(TCNT1 + 10) < top) {     // counter must not have reached the new TOP yet
-    ICR1 = top;
-    pwmPendingTop = 0;
-    TIMSK1 &= ~_BV(TOIE1);
-  }
-  // otherwise: try again at the next BOTTOM (the interrupt stays enabled)
-}
-
-void AvrTimerPWM::setPWMDuty(float duty, uint8_t pin) {
-   if (!(pin == 9) && !(pin == 10) && !(pin == 0)) {
-      raiseError(PWM_ERROR::PIN_INVALID);
-      return;
-   }
-
-   if (duty < 0.0f || duty > 1.0f) pwmWarning = PWM_WARNING::DUTY_CONSTRAINED;
-   duty = constrain(duty, 0.0f, 1.0f);
-   if (pin== 0 || pin == 9)  pwmDuty9 = duty;
-   if (pin== 0 || pin == 10) pwmDuty10 = duty;
-   if (!isPwmConfigured() || !isPwmMode(pwmMode)) return;
-
-   const uint16_t OCR = dutyToOCR(duty, pwmTop, pwmMode);
-
-   switch (pin){
-      case 9:
-         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            OCR1A = OCR;
-         }
-         break;
-      case 10:
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            OCR1B = OCR;
-         }
-         break;
-      case 0:
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            OCR1A = OCR;
-            OCR1B = OCR;
-         }
-         break;
-      default:
-         return;
-   }
-}
-
-float AvrTimerPWM::setPWMFrequency(float freqHz,float lo_limit, float hi_limit) { 
-   // Constraing the frequency to the set limit. If the limits are invalid, usen the default value
-   // More permissive than, changeFrequency() because it resets the timer
-   float lo = frq_default_lo_limit;
-   float hi = frq_default_hi_limit;
-   if (lo_limit < hi_limit && lo_limit >= 0 && hi_limit > 0){   // valid limit values, if not just default 
-      lo = lo_limit;
-      hi = hi_limit;
-   }
-   else pwmWarning = PWM_WARNING::FRQ_HI_LO_INVALID;
-
-   if (freqHz < lo)      pwmWarning = PWM_WARNING::FRQ_CONSTRAINTED_LO;
-   else if (freqHz > hi) pwmWarning = PWM_WARNING::FRQ_CONSTRAINTED_HI;
-   return setTimer(pwmMode, constrain(freqHz, lo, hi));
-}
-
-/**
- * @brief Call every loop() with the frequency setpoint.
- * @brief Moves the output toward targetHz at accelHzPerS (Hz/s = steps/s^2).
- * @brief Mostly should work as a linear ramp.
- * @param targetHz The target frequency in Hz
- * @param accelHzPerS The acceleration in Hz/s
- * @param lo_limit The lower frequency limit
- * @param hi_limit The upper frequency limit
- * @return Returns true while ramping, false when on target (or the timer isn't set up).
- */
 bool AvrTimerPWM::rampPWMFrequency(float targetHz, float accelHzPerS, float lo_limit, float hi_limit) {
    if (!isValidFrequencyRange(lo_limit, hi_limit)){
       lo_limit = frq_default_lo_limit;
@@ -319,6 +295,20 @@ bool AvrTimerPWM::rampPWMFrequency(float targetHz, float accelHzPerS, float lo_l
    return next != targetHz;
 }
 
+#pragma endregion
+
+
+#pragma region Classd Helper Functions
+ISR(TIMER1_OVF_vect) {
+  const uint16_t top = pwmPendingTop;
+  if (top && (uint16_t)(TCNT1 + 10) < top) {     // counter must not have reached the new TOP yet
+    ICR1 = top;
+    pwmPendingTop = 0;
+    TIMSK1 &= ~_BV(TOIE1);
+  }
+  // otherwise: try again at the next BOTTOM (the interrupt stays enabled)
+}
+
 uint8_t AvrTimerPWM::comBits() {
   const bool pwm = isPwmMode(pwmMode);
   uint8_t com = 0;
@@ -330,12 +320,12 @@ uint8_t AvrTimerPWM::comBits() {
 void AvrTimerPWM::updatePins() {
   if (!(pwmEnabled & 1)) PORTB &= ~_BV(PB1);
   if (!(pwmEnabled & 2)) PORTB &= ~_BV(PB2);
-
   TCCR1A = (TCCR1A & 0x0F) | comBits();
 }
 
-#pragma region Helper Functions
-/********************* HELPER FUNCTIONS **********************/
+#pragma endregion
+
+#pragma region Static Helper Functions
 
 static bool isPwmMode(PWM_MODE mode) {
   return mode == PWM_MODE::PH_CORRECT || 
