@@ -3,6 +3,66 @@
 ## 1. Modbus Communication
 #### 1.1 Modbus RTU
 
+**Frequency sweep from Codesys**
+
+For a first test I made a simple frequency sweep in Codesys: the frequency setpoint (holding 0x05) is set to 18000Hz, and once the ramp is done it is set back to 125Hz, then the direction is changed and it starts again. The Nano ramps between the two at 2000Hz/s.
+
+There are 3 frequency values that can be read over Modbus, and it's easy to mix them up:
+* **Setpoint** (holding 0x05): the target frequency written by Codesys.
+* **Requested** (input 0x05): the current position of the ramp, after the lo/hi limits. Once the ramp is done it is equal to the setpoint (unless the setpoint is outside the limits). 
+* **Actual** (input 0x06): the frequency calculated back from the rounded TOP value, so what is actually on the pin. It is never exactly the requested frequency, e.g. 18000Hz gives TOP = 444 and an actual frequency of 18018Hz.
+
+The graph below is simulated from the formulas in the library (not measured yet), with prescaler 1 and the values truncated to whole Hz, like they are read over Modbus.
+
+![Frequency sweep: simulated setpoint, requested and actual](Diagrams/frequency_sweep.svg)
+
+* On the full sweep, actual and requested overlap, the difference is too small to see.
+* Zoomed in on the end of the ramp, the requested frequency is a straight line, while the actual frequency moves in steps of ~40Hz, one for each TOP value.
+* The rounding error grows with the square of the frequency ($\Delta f_{max} \approx \pm f^2 / f_{clk}$ at prescaler 1): under 1Hz below 4kHz, ~18Hz at 18kHz and ~25Hz at 20kHz.
+
+Measuring the frequency via the Modbus Register map specified before using Codesys Trace gives the expected simulated results:
+![Frequency sweep: Measured setpoint, requested and actual](Test-Results/Trace-FrequencySweep.png)
+The indication on the difference between the 3 frequency variables is clearer when zoomed in when reving up:
+![Frequency sweep: measured zoomed in](Test-Results/Trace_Zoomed_FrequencySweep.png)
+
+**Frequency sweep measured with the oscilloscope**
+
+The Codesys trace only shows the values from the registers, so I also measured the sweep directly on the PUL pin (D9), with the same test setup as in the PWM Generation section (only CH1 connected). I made 2 captures with 25M points each:
+* ~42s at 2us sampling, for the full sweep
+* ~19s at 0.8us sampling, for the zoom on the end of a ramp
+
+The frequency is calculated from the time between the rising edges, averaged over 5ms (2ms in the zoom). The raw CSV files are ~350MB each, so they are in Test-Results compressed with xz (~18MB each, `xz -dk file.csv.xz` or 7-Zip to extract).
+
+![Frequency sweep: measured on the PUL pin](Diagrams/frequency_sweep_measured.svg)
+
+|                   | Measured      | Calculated            | Ratio  |
+|-------------------|---------------|-----------------------|--------|
+| Top plateau       | 17958Hz       | 18018Hz (TOP = 444)   | 0.9967 |
+| Bottom plateau    | 124.6Hz       | 125.0Hz (TOP = 64000) | 0.9968 |
+| Ramp (3 ramps)    | 1987.3Hz/s    | 2000Hz/s              | 0.9936 |
+| Ramp duration     | 8.94 - 8.96s  | 8.94s                 |        |
+
+* The steps of ~40Hz from the simulation are also there in the measurement, and they line up with the frequency calculated from TOP (RMS difference 9.9Hz, which is about the resolution of the measurement: +-1 sample of 0.8us in a 2ms window).
+* All the frequencies are ~0.33% lower than calculated. The same offset is in the V0.3 / V0.4 measurements (500Hz measured as ~498.4Hz), so it comes from the board and not from the code: the 16MHz clock of the Nano clone runs slightly slow (most likely a ceramic resonator, which is only accurate to ~0.5%).
+* The ramp is ~0.64% slower than set. This is the same clock offset counted twice: once in the pulse frequency and once in millis(), since every ms of the Nano is slightly longer (0.9967² ≈ 0.9936).
+* The ramp duration matches the calculation, so the 10ms cap on the elapsed time in rampPWMFrequency() is never hit and the ramp is not slowed down by mb.task() blocking.
+* The frequency stays ~0.7s at each end of the sweep before the next ramp starts. This is the time for the whole loop: Codesys reads the requested frequency, sees that the ramp is done and writes the new setpoint. This is a lot slower than expected and still needs to be checked (Codesys Modbus channel cycle times, and a capture of D0/D1 to see the requests and responses).
+
+**Codesys trace vs oscilloscope**
+
+To see how close the value read over Modbus is to what is on the pin, I recorded the same sweep with the Codesys trace (GVL.iFrequency_Actual, input 0x06, traced every 4ms) and with the oscilloscope at the same time (~40s at 2us sampling). The "Frequency Values" channel (input 0x05 - 0x06) is set to 100ms in Codesys.
+
+The two recordings don't share a clock, so they are aligned by matching every value from Codesys with the moment the pin reached that frequency (after correcting the 0.33% clock offset). Over 246 values the delay stays constant within +-10ms (sd 3ms), which is about the resolution of the 2 recordings. The absolute delay between the Nano and Codesys can't be measured this way (it would need a signal recorded by both, e.g. the DIR pin on a second channel), so the graph is aligned with the most recent value at 0 delay.
+
+![Actual frequency: Codesys trace vs oscilloscope](Diagrams/frequency_comparison.svg)
+
+* The actual frequency register is updated in Codesys every **140ms**, not every 100ms like it is set in the channel. Codesys writes all 4 write channels cyclically, even if nothing changes, so there are 8 requests every 100ms (4 writes, 2 reads every 100ms and 1 read twice at 50ms). If one request takes ~17.5ms, the queue never empties and every channel ends up at 140ms.
+* While ramping, the value in Codesys is behind the pin by 0 up to ~280Hz (1987Hz/s * 140ms). It reads lower when ramping up and higher when ramping down.
+* On the 18kHz plateau, Codesys reads 57Hz higher than the pin (18018Hz vs 17958Hz). This is the clock offset from before, the firmware calculates with exactly 16MHz.
+* At 125Hz the difference is ~0.4Hz.
+
+So anything Codesys decides based on the requested or actual frequency is up to 140ms old. Writing the setpoints only on rising edge and reading all input registers in one request should bring this down.
+
 #### 1.2 Modbus TCP
 I currently have a ENC28J60 Ethernet Shield for the Arduino Nano. The distributor I got it from doesn't have any schematics for it, and since it's a cheap one I can't really find any so far. My concern is that the ENC28J60 chip might be using D10 for communication with the board, which means that one PWM pin would be lost. If this is the case, then I will not develop ModbusTCP communication yet. 
 

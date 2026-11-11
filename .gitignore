@@ -1,0 +1,2 @@
+# Raw oscilloscope exports are too large for git, commit the .csv.xz versions instead
+Test-Results/*.csv

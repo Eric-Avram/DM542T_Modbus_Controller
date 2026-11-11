@@ -55,6 +55,39 @@ flowchart LR
     DRV ---|"A+ / A-: coil A<br/>B+ / B-: coil B"| MOT
 ```
 
+## Modbus Register Map
+Slave ID 1. Addresses are 0-based. Each register type is one contiguous block, so it can be read with a single request.
+
+### Coils (FC01 read, FC05/FC15 write)
+| Address | Name | Access | Description |
+|---|---|---|---|
+| 0x00 | `_coil_dir9` | R/W | Direction output for pin 9 (D8) |
+| 0x01 | `_coil_dir10` | R/W | Direction output for pin 10. Not used yet, no DIR pin assigned |
+| 0x02 | `_coil_pwm_start9` | R/W | 1 = PWM on pin 9, 0 = off |
+| 0x03 | `_coil_pwm_start10` | R/W | 1 = PWM on pin 10, 0 = off |
+| 0x04 | `_coil_pwm_configured` | R | 1 = Timer1 configured. Written by the firmware |
+
+### Holding Registers (FC03 read, FC06/FC16 write)
+| Address | Name | Access | Unit | Description |
+|---|---|---|---|---|
+| 0x00 | `_hreg_set_pwm_duty9` | R/W | % | Duty cycle setpoint for pin 9 (0-100) |
+| 0x01 | `_hreg_set_pwm_duty10` | R/W | % | Duty cycle setpoint for pin 10 (0-100). Not applied yet |
+| 0x02 | `_hreg_pwm_mode` | R/W | - | PWM mode: 0 = NORMAL, 1 = PH_CORRECT, 2 = CTC, 3 = FAST_PWM, 4 = FAST_PWM_PH_CORRECT. Not applied yet |
+| 0x03 | `_hreg_pwm_lo_limit` | R/W | Hz | Lower frequency limit (default 125) |
+| 0x04 | `_hreg_pwm_hi_limit` | R/W | Hz | Upper frequency limit (default 20000) |
+| 0x05 | `_hreg_set_pwm_freq` | R/W | Hz | Frequency setpoint. The output ramps to it at 2000 Hz/s |
+
+### Input Registers (FC04 read)
+| Address | Name | Access | Unit | Description |
+|---|---|---|---|---|
+| 0x00 | `_ireg_pwm_enabled` | R | bitmask | Bit 0 = pin 9 enabled, bit 1 = pin 10 enabled |
+| 0x01 | `_ireg_pwm_top` | R | counts | Timer1 TOP (ICR1) |
+| 0x02 | `_ireg_pwm_cs` | R | - | Timer1 clock select: 1 = /1, 2 = /8, 3 = /64, 4 = /256, 5 = /1024 |
+| 0x03 | `_ireg_pwm_duty9` | R | % | Applied duty cycle on pin 9 |
+| 0x04 | `_ireg_pwm_duty10` | R | % | Applied duty cycle on pin 10 |
+| 0x05 | `_ireg_pwm_freq` | R | Hz | Requested frequency, the current ramp position after the limits |
+| 0x06 | `_ireg_pwm_freq_actual` | R | Hz | Actual frequency from TOP and the prescaler, truncated to whole Hz |
+
 ## Known Issues
 * Starting/stopping PWM (`pwmOn`/`pwmOff`) can cut or emit a partial STEP pulse (±1 step per start/stop). Planned fix: start/stop via OCR1x = 0 in mode 8.
 * `mb.task()` blocks for ~3–4 ms per Modbus request.
