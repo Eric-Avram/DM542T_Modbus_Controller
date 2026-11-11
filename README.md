@@ -88,12 +88,16 @@ Slave ID 1. Addresses are 0-based. Each register type is one contiguous block, s
 | 0x05 | `_ireg_pwm_freq` | R | Hz | Requested frequency, the current ramp position after the limits |
 | 0x06 | `_ireg_pwm_freq_actual` | R | Hz | Actual frequency from TOP and the prescaler, truncated to whole Hz |
 
+To check if a ramp is finished, compare the setpoint (holding 0x05) with the requested frequency (input 0x05), which is equal to it once the ramp is done. The actual frequency (input 0x06) never matches the setpoint exactly because TOP is rounded, and the difference grows with the frequency (see [Tests & Results](Tests%20%26%20Results.md#11-modbus-rtu)).
+
 ## Known Issues
 * Starting/stopping PWM (`pwmOn`/`pwmOff`) can cut or emit a partial STEP pulse (±1 step per start/stop). Planned fix: start/stop via OCR1x = 0 in mode 8.
 * `mb.task()` blocks for ~3–4 ms per Modbus request.
 * Frequency registers are 16-bit, so values above 65 535 Hz can't be written in one register.
 * Pin D10 has a PWM channel but no DIR pin yet.
 * Modbus performance is affected by the ModbusSerial Library, which is using delay() to send messages in both the send() and sendPDU() functions. The current implementation plan for the whole controller implies havily that the delay function is not used in the loop. 
+* The 16 MHz clock of the Nano clone runs ~0.33% slow. The actual frequency register is calculated with exactly 16 MHz, so it reads ~0.33% high (e.g. 18018 Hz vs 17958 Hz measured), and ramps are ~0.64% slower than set (1987 Hz/s instead of 2000 Hz/s). See [Tests & Results](Tests%20%26%20Results.md#11-modbus-rtu).
+* With the current Codesys channel setup (4 cyclic write channels and 3 read channels), register values reach Codesys every ~140 ms instead of the configured 100 ms / 50 ms, because the master's request queue never empties. Planned fix: writes on rising edge, one read for all input registers.
 
 ---
 
@@ -143,6 +147,13 @@ Slave ID 1. Addresses are 0-based. Each register type is one contiguous block, s
 * Added the library README, CHANGELOG, LICENSE, `keywords.txt` and `library.properties`
 * Moved the linear ramp from the sketch to the library as `rampPWMFrequency()`
 * Changed the global enums to enum classes to avoid name conflicts
+
+### V0.7 Modbus RTU Register Map & Codesys Testing
+* Tested an ENC28J60 Ethernet shield for Modbus TCP: the shield uses D10 for CS/SS, which is one of the Timer1 PWM pins, so Modbus TCP is dropped for now and development continues with Modbus RTU
+* Split the register map into coils, holding registers (setpoints and settings) and input registers (read-only values), each as one block without gaps, so Codesys can read each type with a single request
+* Moved all the register updates into `write_modbus()` (previously `update_modbus()`)
+* Added a Codesys test program (Raspberry Pi as host) that runs a frequency sweep over Modbus RTU; the archive is in the Testing Programs folder
+* Measured the sweep with the oscilloscope and with the Codesys trace, and compared both with the simulation
 * Added error and warning reporting
 * Added Doxygen documentation in the header and organised the code into regions
 * Fixed: ramp could get inverted at low frequencies; the new TOP is now compared with ICR1 instead of the previous TOP
