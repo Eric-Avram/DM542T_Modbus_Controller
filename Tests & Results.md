@@ -1,6 +1,10 @@
 # Tests & Results Report
 
-## 1. Modbus RTU Communication
+## 1. Modbus Communication
+#### 1.1 Modbus RTU
+
+#### 1.2 Modbus TCP
+I currently have a ENC28J60 Ethernet Shield for the Arduino Nano. The distributor I got it from doesn't have any schematics for it, and since it's a cheap one I can't really find any so far. My concern is that the ENC28J60 chip might be using D10 for communication with the board, which means that one PWM pin would be lost. If this is the case, then I will not develop ModbusTCP communication yet. 
 
 ## 2. PWM Generation
 **Test setup:** Rigol DHO814 oscilloscope, standard probe, DM542T connected, motor as load.
